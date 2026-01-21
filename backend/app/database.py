@@ -17,6 +17,11 @@ if is_postgres:
     elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
         database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+    # Add prepared_statement_cache_size=0 to URL for pgbouncer compatibility
+    # This is more reliable than connect_args for asyncpg
+    separator = "&" if "?" in database_url else "?"
+    database_url = f"{database_url}{separator}prepared_statement_cache_size=0"
+
 # Build engine kwargs based on database type
 engine_kwargs = {
     "echo": settings.debug,
