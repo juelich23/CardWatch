@@ -70,8 +70,7 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
+        # Note: async with already handles session cleanup, no explicit close needed
 
 
 async def init_db():
