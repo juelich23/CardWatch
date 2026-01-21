@@ -13,13 +13,17 @@ settings = get_settings()
 is_postgres = settings.database_url.startswith("postgresql") or settings.database_url.startswith("postgres://")
 
 # Transform the database URL to use the correct async driver
+# Using psycopg (psycopg3) instead of asyncpg for better pgbouncer compatibility
 database_url = settings.database_url
 if is_postgres:
-    # Convert postgres:// or postgresql:// to postgresql+asyncpg://
+    # Convert postgres:// or postgresql:// to postgresql+psycopg://
+    # psycopg3 has native support for pgbouncer transaction mode
     if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
-    elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
-        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif "+asyncpg" in database_url:
+        database_url = database_url.replace("+asyncpg", "+psycopg")
+    elif database_url.startswith("postgresql://") and "+psycopg" not in database_url:
+        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 # Build engine kwargs based on database type
 engine_kwargs = {
@@ -29,18 +33,18 @@ engine_kwargs = {
 if is_postgres:
     # PostgreSQL-specific settings for Supabase/pgbouncer Transaction Pooler
     # Use NullPool - let pgbouncer handle connection pooling
-    # Disable prepared statements (required for pgbouncer transaction mode)
+    # psycopg3 handles pgbouncer transaction mode natively without prepared statement issues
     engine_kwargs.update({
         "poolclass": NullPool,
         "connect_args": {
-            "statement_cache_size": 0,
-            "prepared_statement_cache_size": 0,
+            # Disable prepared statements for pgbouncer compatibility
+            "prepare_threshold": None,
         },
     })
 
-# Log configuration for debugging (v2 - 2026-01-21)
-print(f"[DATABASE CONFIG v2] is_postgres={is_postgres}, using NullPool={is_postgres}, statement_cache_size=0")
-logger.info(f"Database config v2: is_postgres={is_postgres}, poolclass={'NullPool' if is_postgres else 'default'}")
+# Log configuration for debugging (v3 - using psycopg3)
+print(f"[DATABASE CONFIG v3] is_postgres={is_postgres}, using psycopg driver, NullPool={is_postgres}")
+logger.info(f"Database config v3: is_postgres={is_postgres}, driver=psycopg, poolclass={'NullPool' if is_postgres else 'default'}")
 
 engine = create_async_engine(database_url, **engine_kwargs)
 

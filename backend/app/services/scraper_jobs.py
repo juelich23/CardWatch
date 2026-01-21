@@ -32,10 +32,13 @@ def get_db_session():
         is_postgres = database_url.startswith("postgresql") or database_url.startswith("postgres://")
 
         if is_postgres:
+            # Use psycopg (psycopg3) instead of asyncpg for better pgbouncer compatibility
             if database_url.startswith("postgres://"):
-                database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
-            elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
-                database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+                database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+            elif "+asyncpg" in database_url:
+                database_url = database_url.replace("+asyncpg", "+psycopg")
+            elif database_url.startswith("postgresql://") and "+psycopg" not in database_url:
+                database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
         engine_kwargs = {
             "echo": False,
@@ -43,15 +46,14 @@ def get_db_session():
 
         if is_postgres:
             # Use NullPool - let pgbouncer handle connection pooling
-            # Disable prepared statements (required for pgbouncer transaction mode)
+            # psycopg3 handles pgbouncer transaction mode natively
             engine_kwargs.update({
                 "poolclass": NullPool,
                 "connect_args": {
-                    "statement_cache_size": 0,
-                    "prepared_statement_cache_size": 0,
+                    "prepare_threshold": None,
                 },
             })
-            print(f"[SCRAPER_JOBS CONFIG v2] Using NullPool with statement_cache_size=0")
+            print(f"[SCRAPER_JOBS CONFIG v3] Using psycopg driver with NullPool")
 
         _engine = create_async_engine(database_url, **engine_kwargs)
         _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)

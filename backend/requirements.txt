@@ -44,6 +44,7 @@ packaging==25.0
 passlib==1.7.4
 playwright==1.41.0
 psycopg2-binary==2.9.9
+psycopg[binary]==3.1.18
 prompt_toolkit==3.0.52
 propcache==0.4.1
 pyasn1==0.6.1
