@@ -52,10 +52,10 @@ const AUCTION_ITEM_FIELDS = `
   marketValueConfidence
 `;
 
-// Initial fast load - just first batch for immediate display
+// Initial fast load - just first 100 items for immediate display
 const GET_INITIAL_ITEMS = gql`
-  query GetInitialItems {
-    auctionItems(page: 1, pageSize: 500, status: "Live") {
+  query GetInitialAuctionItems {
+    auctionItems(page: 1, pageSize: 100, status: "Live") {
       items {
         ${AUCTION_ITEM_FIELDS}
       }
@@ -64,9 +64,9 @@ const GET_INITIAL_ITEMS = gql`
   }
 `;
 
-// Batch query for background loading
+// Batch query for background loading - uses variables to avoid cache collisions
 const GET_ITEMS_BATCH = gql`
-  query GetItemsBatch($page: Int!, $pageSize: Int!) {
+  query GetAuctionItemsBatch($page: Int!, $pageSize: Int!) {
     auctionItems(page: $page, pageSize: $pageSize, status: "Live") {
       items {
         ${AUCTION_ITEM_FIELDS}
@@ -147,12 +147,11 @@ export function AuctionList() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const backgroundLoadingRef = useRef(false);
 
-  // Initial fast load - first 500 items
+  // Initial fast load - first 100 items only
   const { data: initialData, loading: initialLoading, error } = useQuery<{ auctionItems: { items: AuctionItem[]; total: number } }>(
     GET_INITIAL_ITEMS,
     {
-      fetchPolicy: 'cache-first',
-      nextFetchPolicy: 'cache-and-network',
+      fetchPolicy: 'network-only', // Always fetch fresh to avoid stale cache
     }
   );
 
@@ -192,11 +191,11 @@ export function AuctionList() {
       itemsMap.set(item.id, item);
     });
 
-    // Calculate how many batches we need (starting from page 2 since we have page 1)
-    const startPage = Math.ceil(initialCount / BATCH_SIZE) + 1;
+    // Load all remaining items starting from page 1 with large batch size
+    // This ensures we get ALL items, not just starting from where initial left off
     const totalPages = Math.ceil(total / BATCH_SIZE);
 
-    for (let batchPage = startPage; batchPage <= totalPages; batchPage++) {
+    for (let batchPage = 1; batchPage <= totalPages; batchPage++) {
       try {
         const { data } = await fetchBatch({
           variables: { page: batchPage, pageSize: BATCH_SIZE }
