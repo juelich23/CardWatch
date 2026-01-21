@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { useQuery } from '@apollo/client/react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useQuery, useLazyQuery } from '@apollo/client/react';
 import { gql } from '@apollo/client';
 import { AuctionCard } from './AuctionCard';
 import { AuctionGridSkeleton } from './AuctionCardSkeleton';
@@ -26,33 +26,50 @@ const SaveSearchModal = dynamic(
   { ssr: false, loading: () => null }
 );
 
-// Load all items at once for instant filtering
-const GET_ALL_AUCTION_ITEMS = gql`
-  query GetAllAuctionItems {
-    auctionItems(page: 1, pageSize: 50000, status: "Live") {
+// Fragment for auction item fields
+const AUCTION_ITEM_FIELDS = `
+  id
+  title
+  description
+  currentBid
+  startingBid
+  bidCount
+  endTime
+  imageUrl
+  itemUrl
+  auctionHouse
+  lotNumber
+  gradingCompany
+  grade
+  certNumber
+  category
+  sport
+  status
+  isWatched
+  marketValueLow
+  marketValueHigh
+  marketValueAvg
+  marketValueConfidence
+`;
+
+// Initial fast load - just first batch for immediate display
+const GET_INITIAL_ITEMS = gql`
+  query GetInitialItems {
+    auctionItems(page: 1, pageSize: 500, status: "Live") {
       items {
-        id
-        title
-        description
-        currentBid
-        startingBid
-        bidCount
-        endTime
-        imageUrl
-        itemUrl
-        auctionHouse
-        lotNumber
-        gradingCompany
-        grade
-        certNumber
-        category
-        sport
-        status
-        isWatched
-        marketValueLow
-        marketValueHigh
-        marketValueAvg
-        marketValueConfidence
+        ${AUCTION_ITEM_FIELDS}
+      }
+      total
+    }
+  }
+`;
+
+// Batch query for background loading
+const GET_ITEMS_BATCH = gql`
+  query GetItemsBatch($page: Int!, $pageSize: Int!) {
+    auctionItems(page: $page, pageSize: $pageSize, status: "Live") {
+      items {
+        ${AUCTION_ITEM_FIELDS}
       }
       total
     }
@@ -123,18 +140,102 @@ export function AuctionList() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [loadingSavedSearches, setLoadingSavedSearches] = useState(false);
 
-  // Load all items at once for seamless filtering
-  const { data, loading: queryLoading, error, refetch } = useQuery<{ auctionItems: { items: AuctionItem[]; total: number } }>(
-    GET_ALL_AUCTION_ITEMS,
+  // Progressive loading state
+  const [allItems, setAllItems] = useState<AuctionItem[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const backgroundLoadingRef = useRef(false);
+
+  // Initial fast load - first 500 items
+  const { data: initialData, loading: initialLoading, error } = useQuery<{ auctionItems: { items: AuctionItem[]; total: number } }>(
+    GET_INITIAL_ITEMS,
     {
       fetchPolicy: 'cache-first',
       nextFetchPolicy: 'cache-and-network',
     }
   );
 
-  const allItems = data?.auctionItems.items || [];
-  const totalItems = data?.auctionItems.total || 0;
-  const loading = queryLoading && allItems.length === 0;
+  // Lazy query for background batch loading
+  const [fetchBatch] = useLazyQuery<{ auctionItems: { items: AuctionItem[]; total: number } }>(
+    GET_ITEMS_BATCH,
+    { fetchPolicy: 'network-only' }
+  );
+
+  // Load initial items when they arrive
+  useEffect(() => {
+    if (initialData?.auctionItems) {
+      setAllItems(initialData.auctionItems.items);
+      setTotalItems(initialData.auctionItems.total);
+    }
+  }, [initialData]);
+
+  // Background loading of remaining items
+  const loadRemainingItems = useCallback(async () => {
+    if (backgroundLoadingRef.current) return;
+    if (!initialData?.auctionItems) return;
+
+    const total = initialData.auctionItems.total;
+    const initialCount = initialData.auctionItems.items.length;
+
+    // If we already have all items, skip
+    if (initialCount >= total) return;
+
+    backgroundLoadingRef.current = true;
+    setIsLoadingMore(true);
+
+    const BATCH_SIZE = 2000;
+    const itemsMap = new Map<number, AuctionItem>();
+
+    // Add initial items to map
+    initialData.auctionItems.items.forEach(item => {
+      itemsMap.set(item.id, item);
+    });
+
+    // Calculate how many batches we need (starting from page 2 since we have page 1)
+    const startPage = Math.ceil(initialCount / BATCH_SIZE) + 1;
+    const totalPages = Math.ceil(total / BATCH_SIZE);
+
+    for (let batchPage = startPage; batchPage <= totalPages; batchPage++) {
+      try {
+        const { data } = await fetchBatch({
+          variables: { page: batchPage, pageSize: BATCH_SIZE }
+        });
+
+        if (data?.auctionItems?.items) {
+          // Add new items to map (deduplicates by ID)
+          data.auctionItems.items.forEach(item => {
+            itemsMap.set(item.id, item);
+          });
+
+          // Update state with merged items
+          const mergedItems = Array.from(itemsMap.values());
+          setAllItems(mergedItems);
+          setLoadingProgress(Math.min(100, Math.round((mergedItems.length / total) * 100)));
+        }
+      } catch (err) {
+        console.error('Error loading batch:', err);
+        break;
+      }
+    }
+
+    setIsLoadingMore(false);
+    setLoadingProgress(100);
+    backgroundLoadingRef.current = false;
+  }, [initialData, fetchBatch]);
+
+  // Start background loading after initial data arrives
+  useEffect(() => {
+    if (initialData?.auctionItems && !backgroundLoadingRef.current) {
+      // Small delay to let the UI render first
+      const timer = setTimeout(() => {
+        loadRemainingItems();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [initialData, loadRemainingItems]);
+
+  const loading = initialLoading && allItems.length === 0;
 
   // Client-side filtering and sorting
   const filteredAndSortedItems = useMemo(() => {
@@ -430,7 +531,12 @@ export function AuctionList() {
 
       {/* Filters - Using New FilterBar Component */}
       <div className="mb-6">
-        <FilterBar totalFiltered={totalFiltered} totalItems={totalItems} />
+        <FilterBar
+          totalFiltered={totalFiltered}
+          totalItems={totalItems}
+          isLoadingMore={isLoadingMore}
+          loadingProgress={loadingProgress}
+        />
       </div>
 
       {/* Save Search Modal */}
