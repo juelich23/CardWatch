@@ -151,7 +151,7 @@ export function AuctionList() {
   const { data: initialData, loading: initialLoading, error } = useQuery<{ auctionItems: { items: AuctionItem[]; total: number } }>(
     GET_INITIAL_ITEMS,
     {
-      fetchPolicy: 'network-only', // Always fetch fresh to avoid stale cache
+      fetchPolicy: 'no-cache', // Completely bypass cache to avoid stale 50k data
     }
   );
 
