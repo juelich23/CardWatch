@@ -25,7 +25,18 @@ def get_db_session():
     global _engine, _async_session
     if _engine is None:
         settings = get_settings()
-        _engine = create_async_engine(settings.database_url, echo=False)
+        _engine = create_async_engine(
+            settings.database_url,
+            echo=False,
+            pool_size=3,          # Small pool for scraper jobs
+            max_overflow=2,       # Allow a few extra connections
+            pool_recycle=300,     # Recycle connections after 5 minutes
+            pool_timeout=30,      # Wait up to 30 seconds for a connection
+            connect_args={
+                "statement_cache_size": 0,  # Disable prepared statements for pgbouncer
+                "prepared_statement_cache_size": 0,
+            },
+        )
         _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _async_session
 

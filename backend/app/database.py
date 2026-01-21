@@ -5,11 +5,21 @@ from app.config import get_settings
 settings = get_settings()
 
 # Async engine for high performance
+# Limit pool size to stay within Supabase Transaction Pooler limits
+# Disable prepared statements for pgbouncer transaction mode compatibility
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     future=True,
     pool_pre_ping=True,
+    pool_size=5,          # Base number of connections to keep
+    max_overflow=5,       # Allow up to 5 additional connections under load
+    pool_recycle=300,     # Recycle connections after 5 minutes
+    pool_timeout=30,      # Wait up to 30 seconds for a connection
+    connect_args={
+        "statement_cache_size": 0,  # Disable prepared statements for pgbouncer
+        "prepared_statement_cache_size": 0,
+    },
 )
 
 # Async session factory

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/react";
 import { ApolloProvider } from "@/lib/providers/ApolloProvider";
 import { AuthProvider } from "@/lib/providers/AuthProvider";
 import { FilterProvider } from "@/lib/providers/FilterProvider";
@@ -50,6 +51,7 @@ export default function RootLayout({
             </FilterProvider>
           </ApolloProvider>
         </AuthProvider>
+        <Analytics />
       </body>
     </html>
   );

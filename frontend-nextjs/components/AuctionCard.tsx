@@ -20,16 +20,22 @@ export function AuctionCard({ item }: AuctionCardProps) {
   const [isToggling, setIsToggling] = useState(false);
   const [imageError, setImageError] = useState(false);
 
-  const [toggleWatch] = useMutation<{ toggleWatch: { success: boolean } }>(TOGGLE_WATCH, {
+  const [toggleWatch] = useMutation<{ toggleWatch: { success: boolean; message?: string } }>(TOGGLE_WATCH, {
     onCompleted: (data) => {
       if (data?.toggleWatch?.success) {
         setIsWatched(!isWatched);
         toast.success(isWatched ? 'Removed from watchlist' : 'Added to watchlist');
+      } else {
+        // Mutation returned but with success: false
+        toast.error(data?.toggleWatch?.message || 'Failed to update watchlist');
       }
       setIsToggling(false);
     },
-    onError: () => {
-      toast.error('Failed to update watchlist');
+    onError: (error) => {
+      console.error('[Watchlist] Mutation error:', error);
+      // Show more specific error message
+      const message = error.message || 'Failed to update watchlist';
+      toast.error(message);
       setIsToggling(false);
     },
   });
@@ -41,6 +47,12 @@ export function AuctionCard({ item }: AuctionCardProps) {
       return;
     }
     if (isToggling) return;
+
+    // Debug: Check token status before mutation
+    const token = localStorage.getItem('access_token');
+    console.log('[Watchlist] Token exists:', !!token);
+    console.log('[Watchlist] Item ID:', item.id, 'Type:', typeof item.id);
+
     setIsToggling(true);
     await toggleWatch({ variables: { itemId: item.id } });
   };

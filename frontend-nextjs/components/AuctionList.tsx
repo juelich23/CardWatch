@@ -136,14 +136,17 @@ export function AuctionList() {
   const totalItems = data?.auctionItems.total || 0;
   const loading = queryLoading && allItems.length === 0;
 
-  // Force refresh from network
-  const handleRefresh = () => {
-    refetch();
-  };
-
   // Client-side filtering and sorting
   const filteredAndSortedItems = useMemo(() => {
     let result = [...allItems];
+
+    // Filter out ended auctions (endTime has passed)
+    const now = new Date();
+    result = result.filter(item => {
+      if (!item.endTime) return true; // Keep items without endTime
+      const endTime = new Date(item.endTime.includes('Z') || item.endTime.includes('+') ? item.endTime : item.endTime + 'Z');
+      return endTime > now;
+    });
 
     // Filter by auction house
     if (auctionHouse) {
@@ -254,9 +257,9 @@ export function AuctionList() {
   const hasMore = page < totalPages;
 
   // Reset to page 1 when filters change
-  const handleFilterChange = () => {
+  useEffect(() => {
     setPage(1);
-  };
+  }, [searchInput, auctionHouse, sortBy, minPrice, maxPrice, itemType, sport]);
 
   // Scroll to top when page changes
   useEffect(() => {
@@ -369,17 +372,6 @@ export function AuctionList() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-4xl font-bold text-text">Auctions</h1>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={handleRefresh}
-              disabled={loading}
-              className="p-2 text-muted hover:text-accent hover:bg-accent/10 rounded-full transition-colors disabled:opacity-50"
-              title="Refresh items"
-            >
-              <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </motion.button>
           </div>
 
           {/* Saved Searches Actions - Compact on Mobile */}
@@ -481,9 +473,30 @@ export function AuctionList() {
                 <ChevronLeftIcon className="w-4 h-4 sm:mr-1" />
                 <span className="hidden sm:inline">Previous</span>
               </Button>
-              <span className="text-text-2 text-sm sm:text-base px-2">
-                {page} / {totalPages}
-              </span>
+              <div className="flex items-center gap-1 sm:gap-2 text-text-2 text-sm sm:text-base">
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  value={page}
+                  onChange={(e) => {
+                    const newPage = parseInt(e.target.value, 10);
+                    if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
+                      setPage(newPage);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const newPage = parseInt(e.target.value, 10);
+                    if (isNaN(newPage) || newPage < 1) {
+                      setPage(1);
+                    } else if (newPage > totalPages) {
+                      setPage(totalPages);
+                    }
+                  }}
+                  className="w-12 sm:w-16 text-center bg-panel border border-border rounded px-1 py-1 text-text [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <span>/ {totalPages}</span>
+              </div>
               <Button
                 variant="outline"
                 onClick={() => setPage(page + 1)}

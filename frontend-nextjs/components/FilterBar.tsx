@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useFilters, type SortOption, type ItemTypeFilter, type SportFilterType } from '@/lib/providers/FilterProvider';
+import { useAISearch } from '@/lib/providers/AISearchProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -81,6 +82,7 @@ export function FilterBar({ totalFiltered, totalItems }: FilterBarProps) {
     clearFilters,
   } = useFilters();
 
+  const { openAISearch } = useAISearch();
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const activeFilters = [
@@ -96,166 +98,232 @@ export function FilterBar({ totalFiltered, totalItems }: FilterBarProps) {
 
   return (
     <div className="space-y-3">
-      {/* Mobile: Compact filter bar */}
-      <div className="flex items-center gap-2 md:hidden">
-        <div className="flex-1 relative">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-          <Input
-            type="text"
-            placeholder="Search items..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-9 bg-panel border-border text-text placeholder:text-muted h-10"
-          />
-        </div>
+      {/* Mobile: Redesigned filter bar */}
+      <div className="md:hidden space-y-3">
+        {/* Row 1: AI Search Button - prominent and full width */}
+        <button
+          onClick={openAISearch}
+          className="w-full px-4 py-3 bg-gradient-to-r from-accent/20 to-purple-500/20 border border-accent/30 rounded-xl text-left flex items-center gap-3 active:scale-[0.98] transition-transform"
+        >
+          <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center">
+            <SparklesIcon className="w-5 h-5 text-accent" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-text">AI Search</p>
+            <p className="text-xs text-muted">Describe what you're looking for...</p>
+          </div>
+          <ChevronRightIcon className="w-5 h-5 text-muted" />
+        </button>
 
-        <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="icon" className="relative h-10 w-10">
-              <FilterIcon />
-              {hasActiveFilters && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-[10px] text-white rounded-full flex items-center justify-center">
-                  {activeFilters.length}
-                </span>
-              )}
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="bottom" className="h-[85vh] bg-panel border-border rounded-t-2xl">
-            <SheetHeader>
-              <SheetTitle className="text-text flex items-center justify-between">
-                <span>Filters</span>
-                {hasActiveFilters && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    Clear All
-                  </Button>
+        {/* Row 2: Search input with filter button */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1 relative">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+            <Input
+              type="text"
+              placeholder="Search items..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-9 bg-panel border-border text-text placeholder:text-muted h-10"
+            />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
+              >
+                <XIcon className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="relative h-10 w-10 shrink-0">
+                <FilterIcon />
+                {(minPrice || maxPrice || itemType) && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-[10px] text-white rounded-full flex items-center justify-center">
+                    {[minPrice, maxPrice, itemType].filter(Boolean).length}
+                  </span>
                 )}
-              </SheetTitle>
-            </SheetHeader>
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-[70vh] bg-panel border-border rounded-t-2xl">
+              <SheetHeader>
+                <SheetTitle className="text-text flex items-center justify-between">
+                  <span>More Filters</span>
+                  {hasActiveFilters && (
+                    <Button variant="ghost" size="sm" onClick={clearFilters}>
+                      Clear All
+                    </Button>
+                  )}
+                </SheetTitle>
+              </SheetHeader>
 
-            <div className="mt-6 space-y-6 overflow-y-auto pb-safe">
-              {/* Sort By */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-2">Sort By</label>
-                <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-                  <SelectTrigger className="w-full bg-panel-2 border-border text-text">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-panel border-border">
-                    {sortOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value} className="text-text">
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <div className="mt-6 space-y-6 overflow-y-auto pb-safe">
+                {/* Sort By */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-text-2">Sort By</label>
+                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+                    <SelectTrigger className="w-full bg-panel-2 border-border text-text">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-panel border-border">
+                      {sortOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value} className="text-text">
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Auction House */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-2">Auction House</label>
-                <Select value={auctionHouse || 'all'} onValueChange={(v) => setAuctionHouse(v === 'all' ? '' : v)}>
-                  <SelectTrigger className="w-full bg-panel-2 border-border text-text">
-                    <SelectValue placeholder="All Auction Houses" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-panel border-border">
-                    <SelectItem value="all" className="text-text">All Auction Houses</SelectItem>
-                    {auctionHouses.map((h) => (
-                      <SelectItem key={h.value} value={h.value} className="text-text">
-                        {h.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                {/* Item Type */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-text-2">Item Type</label>
+                  <Select value={itemType || 'all'} onValueChange={(v) => setItemType(v === 'all' ? '' : v as ItemTypeFilter)}>
+                    <SelectTrigger className="w-full bg-panel-2 border-border text-text">
+                      <SelectValue placeholder="All Types" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-panel border-border">
+                      <SelectItem value="all" className="text-text">All Types</SelectItem>
+                      {itemTypes.map((t) => (
+                        <SelectItem key={t.value} value={t.value} className="text-text">
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Sport */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-2">Sport</label>
-                <Select value={sport || 'all'} onValueChange={(v) => setSport(v === 'all' ? '' : v as SportFilterType)}>
-                  <SelectTrigger className="w-full bg-panel-2 border-border text-text">
-                    <SelectValue placeholder="All Sports" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-panel border-border">
-                    <SelectItem value="all" className="text-text">All Sports</SelectItem>
-                    {sports.map((s) => (
-                      <SelectItem key={s.value} value={s.value} className="text-text">
-                        {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Item Type */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-2">Item Type</label>
-                <Select value={itemType || 'all'} onValueChange={(v) => setItemType(v === 'all' ? '' : v as ItemTypeFilter)}>
-                  <SelectTrigger className="w-full bg-panel-2 border-border text-text">
-                    <SelectValue placeholder="All Types" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-panel border-border">
-                    <SelectItem value="all" className="text-text">All Types</SelectItem>
-                    {itemTypes.map((t) => (
-                      <SelectItem key={t.value} value={t.value} className="text-text">
-                        {t.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Price Range */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-text-2">Price Range</label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                    <Input
-                      type="number"
-                      placeholder="Min"
-                      value={minPrice}
-                      onChange={(e) => setMinPrice(e.target.value)}
-                      className="pl-7 bg-panel-2 border-border text-text"
-                    />
-                  </div>
-                  <span className="text-muted">-</span>
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                    <Input
-                      type="number"
-                      placeholder="Max"
-                      value={maxPrice}
-                      onChange={(e) => setMaxPrice(e.target.value)}
-                      className="pl-7 bg-panel-2 border-border text-text"
-                    />
+                {/* Price Range */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-text-2">Price Range</label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                      <Input
+                        type="number"
+                        placeholder="Min"
+                        value={minPrice}
+                        onChange={(e) => setMinPrice(e.target.value)}
+                        className="pl-7 bg-panel-2 border-border text-text"
+                      />
+                    </div>
+                    <span className="text-muted">-</span>
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                      <Input
+                        type="number"
+                        placeholder="Max"
+                        value={maxPrice}
+                        onChange={(e) => setMaxPrice(e.target.value)}
+                        className="pl-7 bg-panel-2 border-border text-text"
+                      />
+                    </div>
                   </div>
                 </div>
+
+                {/* Apply Button */}
+                <Button
+                  className="w-full mt-4"
+                  onClick={() => setMobileFiltersOpen(false)}
+                >
+                  Show {totalFiltered.toLocaleString()} Results
+                </Button>
               </div>
+            </SheetContent>
+          </Sheet>
+        </div>
 
-              {/* Apply Button */}
-              <Button
-                className="w-full mt-4"
-                onClick={() => setMobileFiltersOpen(false)}
+        {/* Row 3: Auction House quick filters - horizontal scroll */}
+        <div className="relative -mx-4 px-4">
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <button
+              onClick={() => setAuctionHouse('')}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                !auctionHouse
+                  ? 'bg-accent text-white'
+                  : 'bg-panel-2 text-text-2 border border-border hover:border-accent/50'
+              }`}
+            >
+              All
+            </button>
+            {auctionHouses.map((h) => (
+              <button
+                key={h.value}
+                onClick={() => setAuctionHouse(auctionHouse === h.value ? '' : h.value)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  auctionHouse === h.value
+                    ? 'bg-accent text-white'
+                    : 'bg-panel-2 text-text-2 border border-border hover:border-accent/50'
+                }`}
               >
-                Show {totalFiltered.toLocaleString()} Results
-              </Button>
-            </div>
-          </SheetContent>
-        </Sheet>
-
-        {/* Sort dropdown (always visible on mobile) */}
-        <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-          <SelectTrigger className="w-[130px] bg-panel border-border text-text h-10">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-panel border-border">
-            {sortOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value} className="text-text">
-                {opt.label}
-              </SelectItem>
+                {h.label}
+              </button>
             ))}
-          </SelectContent>
-        </Select>
+          </div>
+        </div>
+
+        {/* Row 4: Sport quick filters - horizontal scroll */}
+        <div className="relative -mx-4 px-4">
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <button
+              onClick={() => setSport('')}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                !sport
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-panel-2 text-text-2 border border-border hover:border-purple-500/50'
+              }`}
+            >
+              All Sports
+            </button>
+            {sports.map((s) => (
+              <button
+                key={s.value}
+                onClick={() => setSport(sport === s.value ? '' : s.value as SportFilterType)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  sport === s.value
+                    ? 'bg-purple-500 text-white'
+                    : 'bg-panel-2 text-text-2 border border-border hover:border-purple-500/50'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 5: Sort dropdown and Clear All button */}
+        <div className="flex items-center gap-2">
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+            <SelectTrigger className="flex-1 bg-panel border-border text-text h-10">
+              <div className="flex items-center gap-2">
+                <SortIcon className="w-4 h-4 text-muted" />
+                <SelectValue />
+              </div>
+            </SelectTrigger>
+            <SelectContent className="bg-panel border-border">
+              {sortOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-text">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Clear All Filters button - visible when filters are active */}
+          {hasActiveFilters && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearFilters}
+              className="h-10 px-3 shrink-0 text-red-400 border-red-400/30 hover:bg-red-400/10 hover:text-red-300"
+            >
+              <XIcon className="w-4 h-4 mr-1" />
+              Clear All
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Desktop: Full filter bar */}
@@ -346,8 +414,14 @@ export function FilterBar({ totalFiltered, totalItems }: FilterBarProps) {
         </div>
 
         {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            Clear Filters
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={clearFilters}
+            className="text-red-400 border-red-400/30 hover:bg-red-400/10 hover:text-red-300"
+          >
+            <XIcon className="w-4 h-4 mr-1" />
+            Clear All
           </Button>
         )}
       </div>
@@ -414,6 +488,30 @@ function XIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+function SparklesIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function SortIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
     </svg>
   );
 }
