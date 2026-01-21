@@ -25,18 +25,32 @@ def get_db_session():
     global _engine, _async_session
     if _engine is None:
         settings = get_settings()
-        _engine = create_async_engine(
-            settings.database_url,
-            echo=False,
-            pool_size=3,          # Small pool for scraper jobs
-            max_overflow=2,       # Allow a few extra connections
-            pool_recycle=300,     # Recycle connections after 5 minutes
-            pool_timeout=30,      # Wait up to 30 seconds for a connection
-            connect_args={
+
+        # Transform database URL for asyncpg driver (same as database.py)
+        database_url = settings.database_url
+        is_postgres = database_url.startswith("postgresql") or database_url.startswith("postgres://")
+
+        if is_postgres:
+            if database_url.startswith("postgres://"):
+                database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
+                database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        engine_kwargs = {
+            "echo": False,
+            "pool_size": 3,          # Small pool for scraper jobs
+            "max_overflow": 2,       # Allow a few extra connections
+            "pool_recycle": 300,     # Recycle connections after 5 minutes
+            "pool_timeout": 30,      # Wait up to 30 seconds for a connection
+        }
+
+        if is_postgres:
+            engine_kwargs["connect_args"] = {
                 "statement_cache_size": 0,  # Disable prepared statements for pgbouncer
                 "prepared_statement_cache_size": 0,
-            },
-        )
+            }
+
+        _engine = create_async_engine(database_url, **engine_kwargs)
         _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _async_session
 
