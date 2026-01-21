@@ -6,8 +6,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 from sqlalchemy import select, text
 
@@ -56,7 +55,7 @@ def get_db_session():
             print(f"[SCRAPER_JOBS CONFIG v3] Using psycopg driver with NullPool")
 
         _engine = create_async_engine(database_url, **engine_kwargs)
-        _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+        _async_session = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _async_session
 
 
