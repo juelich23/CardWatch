@@ -261,6 +261,13 @@ export function AuctionList() {
     setPage(1);
   }, [searchInput, auctionHouse, sortBy, minPrice, maxPrice, itemType, sport]);
 
+  // Ensure page stays within valid range when filtered results change
+  useEffect(() => {
+    if (totalPages > 0 && page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [totalPages, page]);
+
   // Scroll to top when page changes
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -481,8 +488,9 @@ export function AuctionList() {
                   value={page}
                   onChange={(e) => {
                     const newPage = parseInt(e.target.value, 10);
-                    if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
-                      setPage(newPage);
+                    if (!isNaN(newPage) && newPage >= 1) {
+                      // Clamp to valid range immediately
+                      setPage(Math.min(newPage, totalPages || 1));
                     }
                   }}
                   onBlur={(e) => {
@@ -491,6 +499,11 @@ export function AuctionList() {
                       setPage(1);
                     } else if (newPage > totalPages) {
                       setPage(totalPages);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
                     }
                   }}
                   className="w-12 sm:w-16 text-center bg-panel border border-border rounded px-1 py-1 text-text [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
