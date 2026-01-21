@@ -1,7 +1,10 @@
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -26,13 +29,18 @@ engine_kwargs = {
 if is_postgres:
     # PostgreSQL-specific settings for Supabase/pgbouncer Transaction Pooler
     # Use NullPool - let pgbouncer handle connection pooling
-    # Pass statement_cache_size=0 to disable prepared statements (required for pgbouncer transaction mode)
+    # Disable prepared statements (required for pgbouncer transaction mode)
     engine_kwargs.update({
         "poolclass": NullPool,
         "connect_args": {
             "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
         },
     })
+
+# Log configuration for debugging (v2 - 2026-01-21)
+print(f"[DATABASE CONFIG v2] is_postgres={is_postgres}, using NullPool={is_postgres}, statement_cache_size=0")
+logger.info(f"Database config v2: is_postgres={is_postgres}, poolclass={'NullPool' if is_postgres else 'default'}")
 
 engine = create_async_engine(database_url, **engine_kwargs)
 

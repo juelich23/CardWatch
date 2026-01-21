@@ -43,13 +43,15 @@ def get_db_session():
 
         if is_postgres:
             # Use NullPool - let pgbouncer handle connection pooling
-            # Pass statement_cache_size=0 to disable prepared statements
+            # Disable prepared statements (required for pgbouncer transaction mode)
             engine_kwargs.update({
                 "poolclass": NullPool,
                 "connect_args": {
                     "statement_cache_size": 0,
+                    "prepared_statement_cache_size": 0,
                 },
             })
+            print(f"[SCRAPER_JOBS CONFIG v2] Using NullPool with statement_cache_size=0")
 
         _engine = create_async_engine(database_url, **engine_kwargs)
         _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
