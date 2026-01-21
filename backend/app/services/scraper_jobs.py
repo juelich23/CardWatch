@@ -293,17 +293,17 @@ async def scrape_heritage(max_items: int = 1000):
             raise
 
 
-async def scrape_pristine(max_items: int = 1000):
-    """Scrape Pristine auctions."""
-    logger.info("Starting Pristine scrape")
+async def scrape_pristine():
+    """Scrape Pristine auctions by category."""
+    logger.info("Starting Pristine scrape (by category)")
     from app.scrapers import PristineScraper
 
     async_session = get_db_session()
     async with async_session() as db:
         try:
-            scraper = PristineScraper(db)
-            items = await scraper.scrape_auction_items(max_items=max_items)
-            await db.commit()
+            scraper = PristineScraper()
+            # Scrape all categories with up to 500 pages each (~30k items per category max)
+            items = await scraper.scrape(db, categories=None, max_pages_per_category=500)
             logger.info(f"Pristine scrape complete: {len(items)} items")
             return {"items": len(items)}
         except Exception as e:
