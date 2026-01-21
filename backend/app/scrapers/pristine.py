@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Pristine Auction Scraper
-Fetches auction items from Pristine Auction by parsing HTML pages
+Fetches auction items from Pristine Auction by scraping each category page.
 
-Note: This scraper uses /auction/category/all which excludes 10-minute auctions.
-10-minute auctions are a separate type at /auction/type/ten-minute
+Scrapes by category to get accurate category data for filtering.
+Excludes 10-minute auctions (they're a separate auction type).
 """
 
 import asyncio
@@ -18,16 +18,39 @@ from sqlalchemy import select
 from app.database import get_db, init_db
 from app.models import Auction, AuctionItem
 from app.scrapers.base import HealthCheckResult, retry_async
-from app.utils.sport_detection import detect_sport_from_item
+
+
+# Pristine categories with their URL slugs and mapping to our sport enum
+# Valid sport values: BASKETBALL, BASEBALL, FOOTBALL, HOCKEY, SOCCER, GOLF, BOXING, RACING, OTHER
+PRISTINE_CATEGORIES = {
+    "baseball": {"name": "Baseball", "sport": "BASEBALL"},
+    "basketball": {"name": "Basketball", "sport": "BASKETBALL"},
+    "football": {"name": "Football", "sport": "FOOTBALL"},
+    "hockey": {"name": "Hockey", "sport": "HOCKEY"},
+    "soccer": {"name": "Soccer", "sport": "SOCCER"},
+    "golf": {"name": "Golf", "sport": "GOLF"},
+    "boxing-ufc": {"name": "Boxing & UFC", "sport": "BOXING"},
+    "wrestling": {"name": "Wrestling", "sport": "OTHER"},
+    "racing": {"name": "Racing", "sport": "RACING"},
+    "other-sports": {"name": "Other Sports", "sport": "OTHER"},
+    "trading-cards": {"name": "Trading Cards", "sport": "OTHER"},  # Mixed sports cards
+    "pop-culture": {"name": "Pop Culture", "sport": "OTHER"},
+    "music": {"name": "Music", "sport": "OTHER"},
+    "historical": {"name": "Historical", "sport": "OTHER"},
+    "comic-books": {"name": "Comic Books", "sport": "OTHER"},
+    "coins-bullion": {"name": "Coins & Bullion", "sport": "OTHER"},
+    "fine-art": {"name": "Art", "sport": "OTHER"},
+}
 
 
 class PristineScraper:
     def __init__(self):
         self.base_url = "https://www.pristineauction.com"
-        # URL format: /auction/page/{n}/per_page/60/category/all
-        # Using 60 items per page for efficiency
-        # Note: category/all excludes 10-minute auctions (they're a separate type)
         self.items_per_page = 60
+
+    def get_category_url(self, category_slug: str, page_num: int) -> str:
+        """Get URL for a specific category and page"""
+        return f"{self.base_url}/auction/page/{page_num}/per_page/{self.items_per_page}/category/{category_slug}"
 
     def extract_grading_info(self, title: str, subtitle: Optional[str]) -> dict:
         """Extract grading company, grade, and cert number from title"""
@@ -37,11 +60,9 @@ class PristineScraper:
             'cert_number': None
         }
 
-        # Combine title and subtitle for searching
         full_text = f"{title} {subtitle or ''}"
 
-        # Extract grading company and grade
-        # Examples: "PSA 10", "BGS 9.5", "SGC 9", "BCCG 9"
+        # Match patterns like "PSA 10", "BGS 9.5", "SGC 9", "BCCG 9"
         grading_pattern = r'\b(PSA|BGS|Beckett|SGC|CGC|BCCG)\s+(\d+(?:\.\d+)?)\b'
         match = re.search(grading_pattern, full_text, re.IGNORECASE)
 
@@ -49,41 +70,15 @@ class PristineScraper:
             company = match.group(1)
             grade = match.group(2)
 
-            # Normalize grading company names
             company_map = {
                 'BGS': 'Beckett',
                 'BECKETT': 'Beckett',
                 'BCCG': 'Beckett'
             }
-            result['grading_company'] = company_map.get(company.upper(), company)
+            result['grading_company'] = company_map.get(company.upper(), company.upper())
             result['grade'] = grade
 
         return result
-
-    def extract_category(self, title: str) -> Optional[str]:
-        """Extract sport/category from title"""
-        categories = {
-            'Basketball': ['Basketball', 'NBA', 'Kobe', 'Jordan', 'LeBron', 'Curry'],
-            'Football': ['Football', 'NFL', 'Mahomes', 'Brady'],
-            'Baseball': ['Baseball', 'MLB', 'Trout', 'Ohtani'],
-            'Hockey': ['Hockey', 'NHL', 'Gretzky'],
-            'Soccer': ['Soccer', 'MLS', 'Messi', 'Ronaldo'],
-            'Pokemon': ['Pokemon', 'Pikachu', 'Charizard'],
-            'Magic The Gathering': ['Magic', 'MTG'],
-            'Yu-Gi-Oh': ['Yu-Gi-Oh', 'YuGiOh']
-        }
-
-        title_upper = title.upper()
-        for category, keywords in categories.items():
-            for keyword in keywords:
-                if keyword.upper() in title_upper:
-                    return category
-
-        return None
-
-    def get_page_url(self, page_num: int) -> str:
-        """Get URL for a specific page"""
-        return f"{self.base_url}/auction/page/{page_num}/per_page/{self.items_per_page}/category/all"
 
     @retry_async(max_retries=3, delay=1.0)
     async def fetch_page(self, client: httpx.AsyncClient, url: str) -> str:
@@ -99,58 +94,15 @@ class PristineScraper:
         response.raise_for_status()
         return response.text
 
-    async def estimate_total_pages(self, client: httpx.AsyncClient) -> int:
-        """Estimate total pages by checking specific page numbers"""
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        }
-
-        async def has_items(page: int) -> bool:
-            url = self.get_page_url(page)
-            try:
-                resp = await client.get(url, headers=headers, timeout=15.0, follow_redirects=True)
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                items = soup.find_all('div', class_='product', attrs={'data-pristine-product-venue-id': True})
-                return len(items) > 0
-            except:
-                return False
-
-        # Quick check at common boundaries
-        # Based on ~60k items / 60 per page = ~1000 pages
-        checkpoints = [500, 1000, 1500, 2000]
-        last_with_items = 1
-
-        for page in checkpoints:
-            if await has_items(page):
-                last_with_items = page
-            else:
-                break
-
-        # Binary search between last_with_items and next checkpoint
-        low = last_with_items
-        high = last_with_items + 500
-
-        while low < high:
-            mid = (low + high + 1) // 2
-            if await has_items(mid):
-                low = mid
-            else:
-                high = mid - 1
-
-        return low
-
-    def parse_items(self, html: str) -> list:
-        """Parse auction items from HTML"""
+    def parse_items(self, html: str, category_slug: str, category_info: dict) -> list:
+        """Parse auction items from HTML with category data"""
         soup = BeautifulSoup(html, 'html.parser')
-
-        # Find all product divs
         items = soup.find_all('div', class_='product', attrs={'data-pristine-product-venue-id': True})
 
         normalized_items = []
 
         for item_div in items:
             try:
-                # Extract data attributes
                 venue_id = item_div.get('data-pristine-product-venue-id')
                 title = item_div.get('data-pristine-title', '')
 
@@ -174,7 +126,6 @@ class PristineScraper:
                         try:
                             current_bid = float(bid_data)
                         except:
-                            # Try parsing from text
                             bid_text = high_bid_elem.get_text().strip()
                             bid_match = re.search(r'\$?([\d,]+\.?\d*)', bid_text)
                             if bid_match:
@@ -191,43 +142,36 @@ class PristineScraper:
                         except:
                             pass
 
-                # Find subtitle (grading/additional info)
+                # Find subtitle
                 subtitle_elem = item_div.find('p', class_='subtitle')
                 subtitle = subtitle_elem.get_text().strip() if subtitle_elem else None
 
                 # Extract grading info
                 grading_info = self.extract_grading_info(title, subtitle)
 
-                # Extract category
-                category = self.extract_category(title)
-
-                # Lot number is the venue_id
-                lot_number = venue_id
-
-                # Detect sport from item content
-                sport = detect_sport_from_item(title, subtitle, category).value
-
                 normalized_item = {
                     "external_id": venue_id,
-                    "lot_number": lot_number,
+                    "lot_number": venue_id,
                     "cert_number": grading_info['cert_number'],
-                    "sub_category": category,
                     "grading_company": grading_info['grading_company'],
                     "grade": grading_info['grade'],
                     "title": title[:500] if title else "",
                     "description": subtitle,
-                    "category": category,
-                    "sport": sport,
+                    # Use Pristine's category directly
+                    "category": category_info["name"],
+                    "sub_category": category_slug,
+                    "sport": category_info["sport"],
                     "image_url": image_url,
                     "current_bid": current_bid,
-                    "starting_bid": None,  # Not available in listing
-                    "bid_count": 0,  # Not available in listing
+                    "starting_bid": None,
+                    "bid_count": 0,
                     "end_time": end_time,
                     "status": "Live",
                     "item_url": item_url,
                     "raw_data": {
                         "venue_id": venue_id,
                         "subtitle": subtitle,
+                        "pristine_category": category_slug,
                     }
                 }
 
@@ -239,150 +183,200 @@ class PristineScraper:
 
         return normalized_items
 
-    async def scrape(self, db: AsyncSession, max_items: int = 150000, max_pages: int = 3000) -> list:
-        """Main scraping function with pagination support
+    async def scrape_category(
+        self,
+        client: httpx.AsyncClient,
+        category_slug: str,
+        category_info: dict,
+        max_pages: int = 500
+    ) -> list:
+        """Scrape all items from a single category"""
+        all_items = []
+        consecutive_empty = 0
+        page_num = 1
+
+        while page_num <= max_pages:
+            try:
+                url = self.get_category_url(category_slug, page_num)
+                html = await self.fetch_page(client, url)
+                items = self.parse_items(html, category_slug, category_info)
+
+                if len(items) == 0:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 2:
+                        break
+                else:
+                    consecutive_empty = 0
+                    all_items.extend(items)
+
+                page_num += 1
+
+                # Rate limiting
+                if page_num % 10 == 0:
+                    await asyncio.sleep(0.3)
+
+            except Exception as e:
+                print(f"      ⚠️ Error on page {page_num}: {e}")
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    break
+                page_num += 1
+                continue
+
+        return all_items
+
+    async def scrape(
+        self,
+        db: AsyncSession,
+        categories: List[str] = None,
+        max_pages_per_category: int = 500
+    ) -> list:
+        """Main scraping function - scrapes by category
 
         Args:
             db: Database session
-            max_items: Maximum items to scrape (default 150k to get all)
-            max_pages: Maximum pages to scrape (default 3000 to get all)
+            categories: List of category slugs to scrape (None = all)
+            max_pages_per_category: Max pages per category (default 500 = 30k items)
         """
-        print("🔍 Fetching items from Pristine Auction...")
-        print(f"   Note: Excludes 10-minute auctions (separate type)")
+        print("🔍 Fetching items from Pristine Auction (by category)...")
+        print(f"   Excludes 10-minute auctions")
+
+        # Use all categories if none specified
+        if categories is None:
+            categories = list(PRISTINE_CATEGORIES.keys())
+
+        print(f"   Categories to scrape: {len(categories)}")
+        print()
 
         all_items = []
+        category_counts = {}
 
         async with httpx.AsyncClient() as client:
-            # Estimate total pages
-            print("📡 Estimating total pages...")
-            total_pages = await self.estimate_total_pages(client)
-            print(f"   Total pages available: {total_pages}")
-            print(f"   Estimated items: ~{total_pages * self.items_per_page}")
-
-            # Limit pages to scrape
-            pages_to_scrape = min(max_pages, total_pages)
-            print(f"   Will scrape {pages_to_scrape} pages (max_pages={max_pages})\n")
-
-            # Parse items from each page
-            consecutive_empty = 0
-            for page_num in range(1, pages_to_scrape + 1):
-                try:
-                    if page_num % 50 == 1 or page_num == 1:
-                        print(f"📦 Page {page_num}/{pages_to_scrape}... ({len(all_items)} items so far)")
-
-                    page_url = self.get_page_url(page_num)
-                    page_html = await self.fetch_page(client, page_url)
-
-                    items = self.parse_items(page_html)
-
-                    if len(items) == 0:
-                        consecutive_empty += 1
-                        if consecutive_empty >= 3:
-                            print(f"   Hit {consecutive_empty} consecutive empty pages, stopping")
-                            break
-                    else:
-                        consecutive_empty = 0
-
-                    if page_num % 50 == 1 or page_num == 1:
-                        print(f"   Found {len(items)} items on page {page_num}")
-                    all_items.extend(items)
-
-                    if len(all_items) >= max_items:
-                        print(f"   Reached max_items limit ({max_items})")
-                        all_items = all_items[:max_items]
-                        break
-
-                    # Rate limiting - slight delay between requests
-                    if page_num % 10 == 0:
-                        await asyncio.sleep(0.5)
-
-                except Exception as e:
-                    print(f"   ⚠️ Error fetching page {page_num}: {e}")
+            for i, category_slug in enumerate(categories, 1):
+                category_info = PRISTINE_CATEGORIES.get(category_slug)
+                if not category_info:
+                    print(f"   ⚠️ Unknown category: {category_slug}")
                     continue
 
-            normalized_items = all_items
-            print(f"\n✅ Found {len(normalized_items)} total items")
+                print(f"📦 [{i}/{len(categories)}] Scraping {category_info['name']}...")
 
-            # Create or update auction
-            print("\n📦 Creating/updating auction record...")
-            auction_external_id = "pristine-all"
+                items = await self.scrape_category(
+                    client,
+                    category_slug,
+                    category_info,
+                    max_pages_per_category
+                )
 
+                category_counts[category_info['name']] = len(items)
+                all_items.extend(items)
+
+                print(f"   ✓ Found {len(items)} items in {category_info['name']}")
+
+                # Brief pause between categories
+                await asyncio.sleep(0.5)
+
+        print(f"\n✅ Found {len(all_items)} total items across {len(categories)} categories")
+
+        # Print category breakdown
+        print("\n📊 Category breakdown:")
+        for cat, count in sorted(category_counts.items(), key=lambda x: -x[1]):
+            print(f"   {cat}: {count:,}")
+
+        # Deduplicate by external_id (items might appear in multiple categories)
+        seen_ids = set()
+        unique_items = []
+        duplicates = 0
+        for item in all_items:
+            if item["external_id"] not in seen_ids:
+                seen_ids.add(item["external_id"])
+                unique_items.append(item)
+            else:
+                duplicates += 1
+
+        if duplicates > 0:
+            print(f"\n   Removed {duplicates} duplicate items")
+            print(f"   Unique items: {len(unique_items)}")
+
+        # Create or update auction record
+        print("\n📦 Creating/updating auction record...")
+        auction_external_id = "pristine-all"
+
+        result = await db.execute(
+            select(Auction).where(
+                Auction.auction_house == "pristine",
+                Auction.external_id == auction_external_id
+            )
+        )
+        auction = result.scalar_one_or_none()
+
+        if not auction:
+            auction = Auction(
+                auction_house="pristine",
+                external_id=auction_external_id,
+                title="Pristine Auction",
+                status="active"
+            )
+            db.add(auction)
+            await db.flush()
+
+        print(f"✅ Auction ID: {auction.id}")
+
+        # Save items to database
+        print(f"\n💾 Saving {len(unique_items)} items to database...")
+
+        new_count = 0
+        update_count = 0
+
+        for item_data in unique_items:
             result = await db.execute(
-                select(Auction).where(
-                    Auction.auction_house == "pristine",
-                    Auction.external_id == auction_external_id
+                select(AuctionItem).where(
+                    AuctionItem.auction_house == "pristine",
+                    AuctionItem.external_id == item_data["external_id"]
                 )
             )
-            auction = result.scalar_one_or_none()
+            existing_item = result.scalar_one_or_none()
 
-            if not auction:
-                auction = Auction(
+            if existing_item:
+                for key, value in item_data.items():
+                    if key not in ['external_id', 'auction_house']:
+                        setattr(existing_item, key, value)
+                existing_item.updated_at = datetime.utcnow()
+                update_count += 1
+            else:
+                item = AuctionItem(
+                    auction_id=auction.id,
                     auction_house="pristine",
-                    external_id=auction_external_id,
-                    title="Pristine Auction - All Items",
-                    status="active"
+                    **item_data
                 )
-                db.add(auction)
-                await db.flush()
+                db.add(item)
+                new_count += 1
 
-            print(f"✅ Auction ID: {auction.id}")
+        await db.commit()
+        print(f"✅ Saved to database: {new_count} new, {update_count} updated")
 
-            # Save items to database
-            print(f"\n💾 Saving {len(normalized_items)} items to database...")
+        # Count graded items
+        graded_items = [item for item in unique_items if item.get('grading_company')]
+        print(f"   Items with grading data: {len(graded_items)}")
 
-            for item_data in normalized_items:
-                result = await db.execute(
-                    select(AuctionItem).where(
-                        AuctionItem.auction_house == "pristine",
-                        AuctionItem.external_id == item_data["external_id"]
-                    )
-                )
-                existing_item = result.scalar_one_or_none()
-
-                if existing_item:
-                    # Update existing item
-                    for key, value in item_data.items():
-                        if key not in ['external_id', 'auction_house']:
-                            setattr(existing_item, key, value)
-                    existing_item.updated_at = datetime.utcnow()
-                else:
-                    # Create new item
-                    item = AuctionItem(
-                        auction_id=auction.id,
-                        auction_house="pristine",
-                        **item_data
-                    )
-                    db.add(item)
-
-            await db.commit()
-            print(f"✅ Saved {len(normalized_items)} items to database")
-
-            # Count items with grading data
-            graded_items = [item for item in normalized_items if item.get('grading_company')]
-            print(f"   Items with grading data: {len(graded_items)}")
-
-            return normalized_items
+        return unique_items
 
     async def health_check(self) -> HealthCheckResult:
         """Check if Pristine Auction website is reachable"""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                url = self.get_page_url(1)
+                url = self.get_category_url("baseball", 1)
                 response = await client.get(
                     url,
-                    headers={
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
-                    },
+                    headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'},
                     follow_redirects=True
                 )
                 if response.status_code == 200:
-                    # Check if we can find auction items
                     soup = BeautifulSoup(response.text, 'html.parser')
                     items = soup.find_all('div', class_='product', attrs={'data-pristine-product-venue-id': True})
                     return HealthCheckResult(
                         healthy=True,
                         message="Pristine Auction is reachable",
-                        details={"items_on_page": len(items), "items_per_page": self.items_per_page}
+                        details={"items_on_page": len(items), "categories": len(PRISTINE_CATEGORIES)}
                     )
                 return HealthCheckResult(
                     healthy=False,
@@ -401,40 +395,43 @@ async def main():
     """Entry point for running the scraper
 
     Usage:
-        python -m app.scrapers.pristine              # Full scrape (~60k items)
-        python -m app.scrapers.pristine --test       # Test scrape (100 items)
-        python -m app.scrapers.pristine --pages 10   # Scrape 10 pages (~600 items)
+        python -m app.scrapers.pristine                    # Full scrape (all categories)
+        python -m app.scrapers.pristine --test             # Test scrape (2 categories, 2 pages each)
+        python -m app.scrapers.pristine --category baseball  # Scrape single category
     """
     import sys
 
-    # Parse args
     test_mode = '--test' in sys.argv
-    pages_arg = None
+
+    # Check for single category
+    single_category = None
     for i, arg in enumerate(sys.argv):
-        if arg == '--pages' and i + 1 < len(sys.argv):
-            pages_arg = int(sys.argv[i + 1])
+        if arg == '--category' and i + 1 < len(sys.argv):
+            single_category = sys.argv[i + 1]
 
     if test_mode:
-        max_items = 100
+        categories = ["baseball", "basketball"]
         max_pages = 2
-        print("🧪 Running in TEST mode (100 items, 2 pages)")
-    elif pages_arg:
-        max_items = pages_arg * 60
-        max_pages = pages_arg
-        print(f"📦 Running with {pages_arg} pages (~{max_items} items)")
+        print("🧪 Running in TEST mode (2 categories, 2 pages each)")
+    elif single_category:
+        categories = [single_category]
+        max_pages = 500
+        print(f"📦 Running single category: {single_category}")
     else:
-        max_items = 150000
-        max_pages = 3000
-        print("🚀 Running FULL scrape (all items)")
+        categories = None  # All categories
+        max_pages = 500
+        print("🚀 Running FULL scrape (all categories)")
 
-    # Initialize database
     await init_db()
 
     scraper = PristineScraper()
 
-    # Get database session
     async for db in get_db():
-        items = await scraper.scrape(db, max_items=max_items, max_pages=max_pages)
+        items = await scraper.scrape(
+            db,
+            categories=categories,
+            max_pages_per_category=max_pages
+        )
 
         print(f"\n✅ Scraping complete!")
         print(f"   Total items: {len(items)}")
