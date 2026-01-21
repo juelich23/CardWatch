@@ -7,6 +7,7 @@ settings = get_settings()
 # Async engine for high performance
 # Limit pool size to stay within Supabase Transaction Pooler limits
 # Disable prepared statements for pgbouncer transaction mode compatibility
+# v2: Verified statement_cache_size=0 for Railway deployment
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
