@@ -5,7 +5,8 @@ from app.config import get_settings
 settings = get_settings()
 
 # Determine if we're using PostgreSQL or SQLite
-is_postgres = settings.database_url.startswith("postgresql")
+# Note: Supabase/some providers use postgres:// while SQLAlchemy prefers postgresql://
+is_postgres = settings.database_url.startswith("postgresql") or settings.database_url.startswith("postgres")
 
 # Build engine kwargs based on database type
 engine_kwargs = {
