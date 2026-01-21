@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from sqlalchemy import select, text
 
 from app.config import get_settings
@@ -36,23 +37,19 @@ def get_db_session():
             elif database_url.startswith("postgresql://") and "+asyncpg" not in database_url:
                 database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-            # Add prepared_statement_cache_size=0 to URL for pgbouncer compatibility
-            separator = "&" if "?" in database_url else "?"
-            database_url = f"{database_url}{separator}prepared_statement_cache_size=0"
-
         engine_kwargs = {
             "echo": False,
-            "pool_size": 3,          # Small pool for scraper jobs
-            "max_overflow": 2,       # Allow a few extra connections
-            "pool_recycle": 300,     # Recycle connections after 5 minutes
-            "pool_timeout": 30,      # Wait up to 30 seconds for a connection
         }
 
         if is_postgres:
-            engine_kwargs["connect_args"] = {
-                "statement_cache_size": 0,  # Disable prepared statements for pgbouncer
-                "prepared_statement_cache_size": 0,
-            }
+            # Use NullPool - let pgbouncer handle connection pooling
+            # Pass statement_cache_size=0 to disable prepared statements
+            engine_kwargs.update({
+                "poolclass": NullPool,
+                "connect_args": {
+                    "statement_cache_size": 0,
+                },
+            })
 
         _engine = create_async_engine(database_url, **engine_kwargs)
         _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
