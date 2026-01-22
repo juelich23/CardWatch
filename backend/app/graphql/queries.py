@@ -53,6 +53,7 @@ class Query:
         min_bid: Optional[float] = None,
         max_bid: Optional[float] = None,
         status: str = "Live",
+        sort_by: str = "end_time",
     ) -> PaginatedAuctionItems:
         """
         Get paginated list of auction items with filtering
@@ -68,8 +69,12 @@ class Query:
             min_bid: Minimum current bid
             max_bid: Maximum current bid
             status: Filter by status (default: Live)
+            sort_by: Sort order (end_time, price_low, price_high, bid_count, recent)
         """
         db = await get_db_session()
+
+        # Cap page_size at 100 to prevent abuse
+        page_size = min(page_size, 100)
 
         # Get current user from context (may be None)
         user = info.context.get("user") if info.context else None
@@ -131,20 +136,42 @@ class Query:
         if filters:
             query = query.where(*filters)
 
-        # Get total count
-        count_query = select(func.count()).select_from(AuctionItemModel)
-        if filters:
-            count_query = count_query.where(*filters)
-        result = await db.execute(count_query)
-        total = result.scalar() or 0
+        # Apply sorting based on sort_by parameter
+        if sort_by == "price_low":
+            query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
+        elif sort_by == "price_high":
+            query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
+        elif sort_by == "bid_count":
+            query = query.order_by(AuctionItemModel.bid_count.desc())
+        elif sort_by == "recent":
+            query = query.order_by(AuctionItemModel.id.desc())
+        else:  # default: end_time
+            query = query.order_by(AuctionItemModel.end_time.asc())
 
-        # Apply pagination and ordering
+        # Apply pagination
         offset = (page - 1) * page_size
-        query = query.order_by(AuctionItemModel.end_time.asc()).offset(offset).limit(page_size)
+        query = query.offset(offset).limit(page_size + 1)  # Fetch one extra to check hasMore
 
         # Execute query
         result = await db.execute(query)
-        items = result.scalars().all()
+        items = list(result.scalars().all())
+
+        # Determine if there are more items
+        has_more = len(items) > page_size
+        if has_more:
+            items = items[:page_size]  # Remove the extra item
+
+        # Optimize count: skip expensive COUNT(*) when we can detect last page
+        if len(items) < page_size:
+            # We're on the last page, calculate total from offset + items
+            total = offset + len(items)
+        else:
+            # Need to run count query
+            count_query = select(func.count()).select_from(AuctionItemModel)
+            if filters:
+                count_query = count_query.where(*filters)
+            result = await db.execute(count_query)
+            total = result.scalar() or 0
 
         # Get user's watched item IDs for per-user is_watched
         watched_ids: Set[int] = set()
@@ -162,7 +189,7 @@ class Query:
             total=total,
             page=page,
             page_size=page_size,
-            has_more=(offset + len(items)) < total,
+            has_more=has_more,
         )
 
     @strawberry.field

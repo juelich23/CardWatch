@@ -123,4 +123,5 @@ class AuctionItem(Base):
 
     __table_args__ = (
         Index('ix_item_auction_house_external_id', 'auction_house', 'external_id', unique=True),
+        Index('ix_auction_item_status_end_time', 'status', 'end_time'),
     )
