@@ -248,7 +248,35 @@ class PristineScraper:
         print(f"   Categories to scrape: {len(categories)}")
         print()
 
-        all_items = []
+        # Create or update auction record first
+        auction_external_id = "pristine-all"
+        result = await db.execute(
+            select(Auction).where(
+                Auction.auction_house == "pristine",
+                Auction.external_id == auction_external_id
+            )
+        )
+        auction = result.scalar_one_or_none()
+
+        if not auction:
+            auction = Auction(
+                auction_house="pristine",
+                external_id=auction_external_id,
+                title="Pristine Auction",
+                status="active"
+            )
+            db.add(auction)
+            await db.commit()
+            # Refresh to get the ID
+            await db.refresh(auction)
+
+        print(f"📦 Auction ID: {auction.id}")
+
+        # Track seen IDs across categories to handle duplicates
+        seen_ids = set()
+        total_new = 0
+        total_updated = 0
+        total_duplicates = 0
         category_counts = {}
 
         async with httpx.AsyncClient() as client:
@@ -267,98 +295,65 @@ class PristineScraper:
                     max_pages_per_category
                 )
 
-                category_counts[category_info['name']] = len(items)
-                all_items.extend(items)
+                # Save items for this category immediately
+                new_count = 0
+                update_count = 0
+                duplicates = 0
 
-                print(f"   ✓ Found {len(items)} items in {category_info['name']}")
+                for item_data in items:
+                    # Skip duplicates we've already seen in previous categories
+                    if item_data["external_id"] in seen_ids:
+                        duplicates += 1
+                        continue
+
+                    seen_ids.add(item_data["external_id"])
+
+                    result = await db.execute(
+                        select(AuctionItem).where(
+                            AuctionItem.auction_house == "pristine",
+                            AuctionItem.external_id == item_data["external_id"]
+                        )
+                    )
+                    existing_item = result.scalar_one_or_none()
+
+                    if existing_item:
+                        for key, value in item_data.items():
+                            if key not in ['external_id', 'auction_house']:
+                                setattr(existing_item, key, value)
+                        existing_item.updated_at = datetime.utcnow()
+                        update_count += 1
+                    else:
+                        item = AuctionItem(
+                            auction_id=auction.id,
+                            auction_house="pristine",
+                            **item_data
+                        )
+                        db.add(item)
+                        new_count += 1
+
+                # Commit after each category
+                await db.commit()
+
+                category_counts[category_info['name']] = len(items)
+                total_new += new_count
+                total_updated += update_count
+                total_duplicates += duplicates
+
+                print(f"   ✓ {category_info['name']}: {len(items)} items ({new_count} new, {update_count} updated, {duplicates} dupes)")
 
                 # Brief pause between categories
                 await asyncio.sleep(0.5)
 
-        print(f"\n✅ Found {len(all_items)} total items across {len(categories)} categories")
+        print(f"\n✅ Scrape complete!")
+        print(f"   Total: {total_new} new, {total_updated} updated, {total_duplicates} duplicates skipped")
 
         # Print category breakdown
         print("\n📊 Category breakdown:")
         for cat, count in sorted(category_counts.items(), key=lambda x: -x[1]):
             print(f"   {cat}: {count:,}")
 
-        # Deduplicate by external_id (items might appear in multiple categories)
-        seen_ids = set()
-        unique_items = []
-        duplicates = 0
-        for item in all_items:
-            if item["external_id"] not in seen_ids:
-                seen_ids.add(item["external_id"])
-                unique_items.append(item)
-            else:
-                duplicates += 1
-
-        if duplicates > 0:
-            print(f"\n   Removed {duplicates} duplicate items")
-            print(f"   Unique items: {len(unique_items)}")
-
-        # Create or update auction record
-        print("\n📦 Creating/updating auction record...")
-        auction_external_id = "pristine-all"
-
-        result = await db.execute(
-            select(Auction).where(
-                Auction.auction_house == "pristine",
-                Auction.external_id == auction_external_id
-            )
-        )
-        auction = result.scalar_one_or_none()
-
-        if not auction:
-            auction = Auction(
-                auction_house="pristine",
-                external_id=auction_external_id,
-                title="Pristine Auction",
-                status="active"
-            )
-            db.add(auction)
-            await db.flush()
-
-        print(f"✅ Auction ID: {auction.id}")
-
-        # Save items to database
-        print(f"\n💾 Saving {len(unique_items)} items to database...")
-
-        new_count = 0
-        update_count = 0
-
-        for item_data in unique_items:
-            result = await db.execute(
-                select(AuctionItem).where(
-                    AuctionItem.auction_house == "pristine",
-                    AuctionItem.external_id == item_data["external_id"]
-                )
-            )
-            existing_item = result.scalar_one_or_none()
-
-            if existing_item:
-                for key, value in item_data.items():
-                    if key not in ['external_id', 'auction_house']:
-                        setattr(existing_item, key, value)
-                existing_item.updated_at = datetime.utcnow()
-                update_count += 1
-            else:
-                item = AuctionItem(
-                    auction_id=auction.id,
-                    auction_house="pristine",
-                    **item_data
-                )
-                db.add(item)
-                new_count += 1
-
-        await db.commit()
-        print(f"✅ Saved to database: {new_count} new, {update_count} updated")
-
-        # Count graded items
-        graded_items = [item for item in unique_items if item.get('grading_company')]
-        print(f"   Items with grading data: {len(graded_items)}")
-
-        return unique_items
+        # Return count of unique items processed
+        return list(seen_ids)
 
     async def health_check(self) -> HealthCheckResult:
         """Check if Pristine Auction website is reachable"""
