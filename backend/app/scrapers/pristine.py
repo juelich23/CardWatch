@@ -209,6 +209,10 @@ class PristineScraper:
                     consecutive_empty = 0
                     all_items.extend(items)
 
+                # Log progress every 25 pages
+                if page_num % 25 == 0:
+                    print(f"      ... page {page_num}, {len(all_items)} items so far", flush=True)
+
                 page_num += 1
 
                 # Rate limiting
@@ -216,7 +220,7 @@ class PristineScraper:
                     await asyncio.sleep(0.3)
 
             except Exception as e:
-                print(f"      ⚠️ Error on page {page_num}: {e}")
+                print(f"      ⚠️ Error on page {page_num}: {e}", flush=True)
                 consecutive_empty += 1
                 if consecutive_empty >= 3:
                     break
@@ -238,15 +242,15 @@ class PristineScraper:
             categories: List of category slugs to scrape (None = all)
             max_pages_per_category: Max pages per category (default 500 = 30k items)
         """
-        print("🔍 Fetching items from Pristine Auction (by category)...")
-        print(f"   Excludes 10-minute auctions")
+        print("🔍 Fetching items from Pristine Auction (by category)...", flush=True)
+        print(f"   Excludes 10-minute auctions", flush=True)
 
         # Use all categories if none specified
         if categories is None:
             categories = list(PRISTINE_CATEGORIES.keys())
 
-        print(f"   Categories to scrape: {len(categories)}")
-        print()
+        print(f"   Categories to scrape: {len(categories)}", flush=True)
+        print(flush=True)
 
         # Create or update auction record first
         auction_external_id = "pristine-all"
@@ -270,7 +274,7 @@ class PristineScraper:
             # Refresh to get the ID
             await db.refresh(auction)
 
-        print(f"📦 Auction ID: {auction.id}")
+        print(f"📦 Auction ID: {auction.id}", flush=True)
 
         # Track seen IDs across categories to handle duplicates
         seen_ids = set()
@@ -286,7 +290,7 @@ class PristineScraper:
                     print(f"   ⚠️ Unknown category: {category_slug}")
                     continue
 
-                print(f"📦 [{i}/{len(categories)}] Scraping {category_info['name']}...")
+                print(f"📦 [{i}/{len(categories)}] Scraping {category_info['name']}...", flush=True)
 
                 items = await self.scrape_category(
                     client,
@@ -339,18 +343,18 @@ class PristineScraper:
                 total_updated += update_count
                 total_duplicates += duplicates
 
-                print(f"   ✓ {category_info['name']}: {len(items)} items ({new_count} new, {update_count} updated, {duplicates} dupes)")
+                print(f"   ✓ {category_info['name']}: {len(items)} items ({new_count} new, {update_count} updated, {duplicates} dupes)", flush=True)
 
                 # Brief pause between categories
                 await asyncio.sleep(0.5)
 
-        print(f"\n✅ Scrape complete!")
-        print(f"   Total: {total_new} new, {total_updated} updated, {total_duplicates} duplicates skipped")
+        print(f"\n✅ Scrape complete!", flush=True)
+        print(f"   Total: {total_new} new, {total_updated} updated, {total_duplicates} duplicates skipped", flush=True)
 
         # Print category breakdown
-        print("\n📊 Category breakdown:")
+        print("\n📊 Category breakdown:", flush=True)
         for cat, count in sorted(category_counts.items(), key=lambda x: -x[1]):
-            print(f"   {cat}: {count:,}")
+            print(f"   {cat}: {count:,}", flush=True)
 
         # Return count of unique items processed
         return list(seen_ids)
