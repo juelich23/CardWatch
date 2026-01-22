@@ -233,14 +233,14 @@ class PristineScraper:
         self,
         db: AsyncSession,
         categories: List[str] = None,
-        max_pages_per_category: int = 500
+        max_pages_per_category: int = 100
     ) -> list:
         """Main scraping function - scrapes by category
 
         Args:
             db: Database session
             categories: List of category slugs to scrape (None = all)
-            max_pages_per_category: Max pages per category (default 500 = 30k items)
+            max_pages_per_category: Max pages per category (default 100 = 6k items)
         """
         print("🔍 Fetching items from Pristine Auction (by category)...", flush=True)
         print(f"   Excludes 10-minute auctions", flush=True)
@@ -304,39 +304,54 @@ class PristineScraper:
                 update_count = 0
                 duplicates = 0
 
+                # Filter out duplicates first
+                unique_items = []
                 for item_data in items:
-                    # Skip duplicates we've already seen in previous categories
                     if item_data["external_id"] in seen_ids:
                         duplicates += 1
                         continue
-
                     seen_ids.add(item_data["external_id"])
+                    unique_items.append(item_data)
 
+                # Get all existing items for this category in one query
+                if unique_items:
+                    external_ids = [item["external_id"] for item in unique_items]
                     result = await db.execute(
                         select(AuctionItem).where(
                             AuctionItem.auction_house == "pristine",
-                            AuctionItem.external_id == item_data["external_id"]
+                            AuctionItem.external_id.in_(external_ids)
                         )
                     )
-                    existing_item = result.scalar_one_or_none()
+                    existing_items = {item.external_id: item for item in result.scalars().all()}
+                    print(f"      ... saving {len(unique_items)} items ({len(existing_items)} existing)", flush=True)
 
-                    if existing_item:
-                        for key, value in item_data.items():
-                            if key not in ['external_id', 'auction_house']:
-                                setattr(existing_item, key, value)
-                        existing_item.updated_at = datetime.utcnow()
-                        update_count += 1
-                    else:
-                        item = AuctionItem(
-                            auction_id=auction.id,
-                            auction_house="pristine",
-                            **item_data
-                        )
-                        db.add(item)
-                        new_count += 1
+                    # Process items in batches
+                    batch_size = 500
+                    for batch_start in range(0, len(unique_items), batch_size):
+                        batch = unique_items[batch_start:batch_start + batch_size]
 
-                # Commit after each category
-                await db.commit()
+                        for item_data in batch:
+                            existing_item = existing_items.get(item_data["external_id"])
+
+                            if existing_item:
+                                for key, value in item_data.items():
+                                    if key not in ['external_id', 'auction_house']:
+                                        setattr(existing_item, key, value)
+                                existing_item.updated_at = datetime.utcnow()
+                                update_count += 1
+                            else:
+                                item = AuctionItem(
+                                    auction_id=auction.id,
+                                    auction_house="pristine",
+                                    **item_data
+                                )
+                                db.add(item)
+                                new_count += 1
+
+                        # Commit each batch
+                        await db.commit()
+                        if batch_start + batch_size < len(unique_items):
+                            print(f"      ... committed batch {batch_start // batch_size + 1}", flush=True)
 
                 category_counts[category_info['name']] = len(items)
                 total_new += new_count
