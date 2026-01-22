@@ -365,27 +365,27 @@ async def cleanup_ended_auctions(days_old: int = 7):
 SCRAPER_JOBS = {
     "cardhobby": {
         "func": scrape_cardhobby,
-        "default_interval": 30,  # minutes
+        "default_interval": 60,  # every hour
         "description": "Scrape CardHobby auctions",
     },
     "goldin": {
         "func": scrape_goldin,
-        "default_interval": 30,
+        "default_interval": 60,  # every hour
         "description": "Scrape Goldin auctions",
     },
     "fanatics": {
         "func": scrape_fanatics,
-        "default_interval": 30,
+        "default_interval": 60,  # every hour
         "description": "Scrape Fanatics auctions",
     },
     "heritage": {
         "func": scrape_heritage,
-        "default_interval": 60,  # Less frequent - larger site
+        "default_interval": 120,  # every 2 hours - larger site
         "description": "Scrape Heritage auctions",
     },
     "pristine": {
         "func": scrape_pristine,
-        "default_interval": 30,
+        "default_interval": 240,  # every 4 hours - large scrape
         "description": "Scrape Pristine auctions",
     },
     "cleanup": {
