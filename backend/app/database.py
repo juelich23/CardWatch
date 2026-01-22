@@ -62,18 +62,24 @@ class Base(DeclarativeBase):
 
 
 from typing import AsyncGenerator
+from contextlib import asynccontextmanager
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting async database sessions.
 
-    Creates a new session per request with proper cleanup.
-    Does not auto-commit - callers should commit explicitly if needed.
+    Creates a new session per request. With NullPool, each session
+    gets its own connection that's released when the session is done.
+    We don't explicitly close to avoid IllegalStateChangeError with
+    concurrent requests through pgbouncer.
     """
     session = async_session_maker()
     try:
         yield session
-    finally:
-        await session.close()
+    except Exception:
+        await session.rollback()
+        raise
+    # Note: With NullPool, connection is released when session is garbage collected
+    # Explicit close() causes IllegalStateChangeError with concurrent pgbouncer requests
 
 
 async def init_db():
