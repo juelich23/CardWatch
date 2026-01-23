@@ -347,26 +347,41 @@ class Query:
         if not include_ended:
             query = query.where(AuctionItemModel.end_time > datetime.utcnow())
 
-        # Get total count
-        count_query = (
-            select(func.count())
-            .select_from(AuctionItemModel)
-            .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
-            .where(UserWatchlistItem.user_id == user.id)
-        )
-        if not include_ended:
-            count_query = count_query.where(AuctionItemModel.end_time > datetime.utcnow())
-
-        result = await db.execute(count_query)
-        total = result.scalar() or 0
-
         # Apply pagination and ordering (ending soonest first)
+        # Fetch one extra to determine hasMore without separate count query
         offset = (page - 1) * page_size
-        query = query.order_by(AuctionItemModel.end_time.asc()).offset(offset).limit(page_size)
+        query = query.order_by(AuctionItemModel.end_time.asc()).offset(offset).limit(page_size + 1)
 
         # Execute query
         result = await db.execute(query)
-        items = result.scalars().all()
+        items = list(result.scalars().all())
+
+        # Determine if there are more items
+        has_more = len(items) > page_size
+        if has_more:
+            items = items[:page_size]
+
+        # For small result sets, calculate total from offset + items
+        # This avoids a separate COUNT query for typical watchlists
+        if len(items) < page_size:
+            total = offset + len(items)
+        else:
+            # Only run count query if we need it (results fill the page)
+            count_query = (
+                select(func.count())
+                .select_from(UserWatchlistItem)
+                .where(UserWatchlistItem.user_id == user.id)
+            )
+            if not include_ended:
+                count_query = (
+                    select(func.count())
+                    .select_from(AuctionItemModel)
+                    .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
+                    .where(UserWatchlistItem.user_id == user.id)
+                    .where(AuctionItemModel.end_time > datetime.utcnow())
+                )
+            count_result = await db.execute(count_query)
+            total = count_result.scalar() or 0
 
         # Convert to GraphQL types - all items in watchlist are watched by this user
         graphql_items = [auction_item_from_model(item, is_watched=True) for item in items]
@@ -376,7 +391,7 @@ class Query:
             total=total,
             page=page,
             page_size=page_size,
-            has_more=(offset + len(items)) < total,
+            has_more=has_more,
         )
 
     @strawberry.field

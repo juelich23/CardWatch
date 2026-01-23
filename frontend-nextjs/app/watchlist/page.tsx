@@ -24,7 +24,8 @@ export default function WatchlistPage() {
   }>(GET_WATCHLIST, {
     variables: { includeEnded, page, pageSize },
     skip: !user,
-    fetchPolicy: 'cache-first',
+    fetchPolicy: 'cache-and-network',
+    nextFetchPolicy: 'cache-first',
   });
 
   const [toggleWatch] = useMutation(TOGGLE_WATCH, {
