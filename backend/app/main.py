@@ -20,15 +20,30 @@ settings = get_settings()
 
 async def run_migrations():
     """Run pending database migrations on startup."""
+    from app.database import database_url
+    is_postgres = "postgresql" in database_url or "postgres" in database_url
+
     async with async_session_maker() as session:
-        # Check if item_type column exists
-        check_query = text("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'auction_items' AND column_name = 'item_type'
-        """)
+        # Check if item_type column exists (different SQL for PostgreSQL vs SQLite)
+        if is_postgres:
+            check_query = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'auction_items' AND column_name = 'item_type'
+            """)
+        else:
+            check_query = text("PRAGMA table_info(auction_items)")
+
         result = await session.execute(check_query)
-        if result.fetchone() is None:
+
+        # Determine if column exists
+        if is_postgres:
+            column_exists = result.fetchone() is not None
+        else:
+            columns = result.fetchall()
+            column_exists = any(col[1] == 'item_type' for col in columns)
+
+        if not column_exists:
             print("Migration: Adding item_type column...")
             await session.execute(text(
                 "ALTER TABLE auction_items ADD COLUMN item_type VARCHAR(20)"

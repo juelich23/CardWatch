@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import text
-from app.database import async_session_maker
+from app.database import async_session_maker, database_url
 
 
 async def add_item_type_column():
@@ -22,15 +22,24 @@ async def add_item_type_column():
     print("Adding item_type column to auction_items table")
     print("=" * 60)
 
+    is_postgres = "postgresql" in database_url or "postgres" in database_url
+    print(f"Database type: {'PostgreSQL' if is_postgres else 'SQLite'}")
+
     async with async_session_maker() as session:
-        # Check if column already exists
-        check_query = text("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'auction_items' AND column_name = 'item_type'
-        """)
-        result = await session.execute(check_query)
-        exists = result.fetchone() is not None
+        # Check if column already exists (different SQL for PostgreSQL vs SQLite)
+        if is_postgres:
+            check_query = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'auction_items' AND column_name = 'item_type'
+            """)
+            result = await session.execute(check_query)
+            exists = result.fetchone() is not None
+        else:
+            check_query = text("PRAGMA table_info(auction_items)")
+            result = await session.execute(check_query)
+            columns = result.fetchall()
+            exists = any(col[1] == 'item_type' for col in columns)
 
         if exists:
             print("\nColumn 'item_type' already exists. Nothing to do.")
