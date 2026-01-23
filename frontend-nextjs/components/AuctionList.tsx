@@ -10,7 +10,6 @@ import { useAuth } from '@/lib/providers/AuthProvider';
 import { useFilters, type SortOption, type ItemTypeFilter, type SportFilterType } from '@/lib/providers/FilterProvider';
 import { savedSearchesAPI, SavedSearch, SavedSearchFilters } from '@/lib/api/savedSearches';
 import { GET_AUCTION_ITEMS } from '@/lib/graphql/queries';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -411,51 +410,40 @@ export function AuctionList() {
       />
 
       {/* Grid */}
-      <AnimatePresence mode="wait">
-        {displayedItems.length === 0 && !loading ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="text-center py-12"
-          >
-            <p className="text-muted text-lg">No auction items found</p>
-            {hasActiveFilters && (
-              <Button variant="outline" className="mt-4" onClick={clearFilters}>
-                Clear Filters
-              </Button>
-            )}
-          </motion.div>
-        ) : (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            {/* Responsive Grid - 2 cols on mobile for better use of space */}
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 mb-8">
-              {displayedItems.map((item) => (
-                <AuctionCard key={item.id} item={item} />
-              ))}
-            </div>
+      {displayedItems.length === 0 && !loading ? (
+        <div className="text-center py-12">
+          <p className="text-muted text-lg">No auction items found</p>
+          {hasActiveFilters && (
+            <Button variant="outline" className="mt-4" onClick={clearFilters}>
+              Clear Filters
+            </Button>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Responsive Grid - 2 cols on mobile for better use of space */}
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 mb-8">
+            {displayedItems.map((item) => (
+              <AuctionCard key={item.id} item={item} />
+            ))}
+          </div>
 
-            {/* Infinite Scroll Sentinel */}
-            <div ref={sentinelRef} className="flex justify-center py-8">
-              {isLoadingMore && (
-                <div className="flex items-center gap-2 text-text-2">
-                  <LoadingSpinner />
-                  <span>Loading more items...</span>
-                </div>
-              )}
-              {!hasMore && displayedItems.length > 0 && (
-                <p className="text-muted text-sm">
-                  Showing all {displayedItems.length.toLocaleString()} items
-                </p>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          {/* Infinite Scroll Sentinel */}
+          <div ref={sentinelRef} className="flex justify-center py-8">
+            {isLoadingMore && (
+              <div className="flex items-center gap-2 text-text-2">
+                <LoadingSpinner />
+                <span>Loading more items...</span>
+              </div>
+            )}
+            {!hasMore && displayedItems.length > 0 && (
+              <p className="text-muted text-sm">
+                Showing all {displayedItems.length.toLocaleString()} items
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

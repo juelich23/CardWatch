@@ -5,16 +5,15 @@ import { MarketValueBadge } from './MarketValueBadge';
 import { useMutation } from '@apollo/client/react';
 import { TOGGLE_WATCH } from '@/lib/graphql/queries';
 import { useAuth } from '@/lib/providers/AuthProvider';
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import Image from 'next/image';
-import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
 interface AuctionCardProps {
   item: AuctionItem;
 }
 
-export function AuctionCard({ item }: AuctionCardProps) {
+export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps) {
   const { user } = useAuth();
   const [isWatched, setIsWatched] = useState(item.isWatched || false);
   const [isToggling, setIsToggling] = useState(false);
@@ -119,23 +118,18 @@ export function AuctionCard({ item }: AuctionCardProps) {
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -2 }}
-      transition={{ duration: 0.15 }}
-      className="bg-panel border rounded-lg sm:rounded-xl overflow-hidden transition-all flex flex-col border-border hover:border-accent/50"
+    <div
+      className="bg-panel border rounded-lg sm:rounded-xl overflow-hidden flex flex-col border-border hover:border-accent/50 hover:-translate-y-0.5 transition-transform duration-150"
     >
       {/* Image Container - Responsive height */}
       <div className="relative bg-panel-2">
         {/* Action buttons - Compact on mobile for 2-col grid */}
         <div className="absolute top-1.5 sm:top-2 right-1.5 sm:right-2 z-10 flex gap-1 sm:gap-2">
           {/* Watchlist button */}
-          <motion.button
-            whileTap={{ scale: 0.9 }}
+          <button
             onClick={handleToggleWatch}
             disabled={isToggling}
-            className={`w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all shadow-lg ${
+            className={`w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-transform ${
               isWatched
                 ? 'bg-red-500 text-white'
                 : 'bg-panel/90 backdrop-blur-sm border border-border hover:border-red-400 text-text-2 hover:text-red-400'
@@ -155,7 +149,7 @@ export function AuctionCard({ item }: AuctionCardProps) {
                 d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
               />
             </svg>
-          </motion.button>
+          </button>
         </div>
 
         {/* Auction house badge - Smaller on mobile */}
@@ -256,24 +250,23 @@ export function AuctionCard({ item }: AuctionCardProps) {
         {/* Action */}
         <div className="mt-auto">
           {item.itemUrl && (
-            <motion.a
-              whileTap={{ scale: 0.98 }}
+            <a
               href={item.itemUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full py-2 sm:py-2.5 px-2 sm:px-4 bg-accent hover:bg-accent/80 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors min-h-[36px] sm:min-h-[44px] flex items-center justify-center gap-1.5"
+              className="w-full py-2 sm:py-2.5 px-2 sm:px-4 bg-accent hover:bg-accent/80 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors min-h-[36px] sm:min-h-[44px] flex items-center justify-center gap-1.5 active:scale-[0.98]"
             >
               View on {getAuctionHouseDisplayName()}
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
-            </motion.a>
+            </a>
           )}
         </div>
       </div>
-    </motion.div>
+    </div>
   );
-}
+});
 
 function ClockIcon({ className }: { className?: string }) {
   return (
