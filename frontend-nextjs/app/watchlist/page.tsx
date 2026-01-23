@@ -16,13 +16,14 @@ export default function WatchlistPage() {
     setMounted(true);
   }, []);
   const [includeEnded, setIncludeEnded] = useState(false);
+  const [sortBy, setSortBy] = useState('end_time');
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
   const { data, loading, error, refetch } = useQuery<{
     watchlist: { items: AuctionItem[]; total: number; hasMore: boolean };
   }>(GET_WATCHLIST, {
-    variables: { includeEnded, page, pageSize },
+    variables: { includeEnded, page, pageSize, sortBy },
     skip: !user,
     fetchPolicy: 'cache-and-network',
     nextFetchPolicy: 'cache-first',
@@ -138,19 +139,42 @@ export default function WatchlistPage() {
             </p>
           </div>
 
-          {/* Include ended toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={includeEnded}
-              onChange={(e) => {
-                setIncludeEnded(e.target.checked);
-                setPage(1);
-              }}
-              className="w-4 h-4 rounded border-border bg-panel text-accent focus:ring-accent focus:ring-offset-0"
-            />
-            <span className="text-text-2 text-sm">Show ended auctions</span>
-          </label>
+          <div className="flex items-center gap-4">
+            {/* Sort dropdown */}
+            <div className="flex items-center gap-2">
+              <label htmlFor="sort-select" className="text-text-2 text-sm">
+                Sort by:
+              </label>
+              <select
+                id="sort-select"
+                value={sortBy}
+                onChange={(e) => {
+                  setSortBy(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-panel border border-border rounded-md px-3 py-1.5 text-text text-sm focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
+              >
+                <option value="end_time">End Time</option>
+                <option value="price_low">Price: Low to High</option>
+                <option value="price_high">Price: High to Low</option>
+                <option value="recently_added">Recently Added</option>
+              </select>
+            </div>
+
+            {/* Include ended toggle */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeEnded}
+                onChange={(e) => {
+                  setIncludeEnded(e.target.checked);
+                  setPage(1);
+                }}
+                className="w-4 h-4 rounded border-border bg-panel text-accent focus:ring-accent focus:ring-offset-0"
+              />
+              <span className="text-text-2 text-sm">Show ended auctions</span>
+            </label>
+          </div>
         </div>
 
         {loading && items.length === 0 ? (

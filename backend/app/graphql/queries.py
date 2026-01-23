@@ -313,6 +313,7 @@ class Query:
         include_ended: bool = True,
         page: int = 1,
         page_size: int = 20,
+        sort_by: str = "end_time",
     ) -> PaginatedAuctionItems:
         """
         Get current user's watchlist items.
@@ -322,6 +323,7 @@ class Query:
             include_ended: Include items from ended auctions (default True)
             page: Page number (1-indexed)
             page_size: Number of items per page
+            sort_by: Sort order (end_time, price_low, price_high, recently_added)
         """
         # Check for authenticated user
         user = info.context.get("user") if info.context else None
@@ -347,10 +349,19 @@ class Query:
         if not include_ended:
             query = query.where(AuctionItemModel.end_time > datetime.utcnow())
 
-        # Apply pagination and ordering (ending soonest first)
-        # Fetch one extra to determine hasMore without separate count query
+        # Apply sorting
+        if sort_by == "price_low":
+            query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
+        elif sort_by == "price_high":
+            query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
+        elif sort_by == "recently_added":
+            query = query.order_by(UserWatchlistItem.added_at.desc())
+        else:  # default: end_time
+            query = query.order_by(AuctionItemModel.end_time.asc())
+
+        # Apply pagination - fetch one extra to determine hasMore
         offset = (page - 1) * page_size
-        query = query.order_by(AuctionItemModel.end_time.asc()).offset(offset).limit(page_size + 1)
+        query = query.offset(offset).limit(page_size + 1)
 
         # Execute query
         result = await db.execute(query)

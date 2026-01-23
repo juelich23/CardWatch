@@ -121,8 +121,8 @@ export const TOGGLE_WATCH = gql`
 `;
 
 export const GET_WATCHLIST = gql`
-  query GetWatchlist($includeEnded: Boolean!, $page: Int!, $pageSize: Int!) {
-    watchlist(includeEnded: $includeEnded, page: $page, pageSize: $pageSize) {
+  query GetWatchlist($includeEnded: Boolean!, $page: Int!, $pageSize: Int!, $sortBy: String) {
+    watchlist(includeEnded: $includeEnded, page: $page, pageSize: $pageSize, sortBy: $sortBy) {
       items {
         id
         title
