@@ -30,7 +30,9 @@ async def run_migrations():
                 check_query = text("""
                     SELECT column_name
                     FROM information_schema.columns
-                    WHERE table_name = 'auction_items' AND column_name = 'item_type'
+                    WHERE table_name = 'auction_items'
+                    AND column_name = 'item_type'
+                    AND table_schema = 'public'
                 """)
             else:
                 check_query = text("PRAGMA table_info(auction_items)")
