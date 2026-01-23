@@ -143,13 +143,19 @@ class BaseScraper(ABC):
     async def save_to_database(self, items: List[Dict]):
         """
         Save scraped items to the database.
-        Handles deduplication and updates.
+        Handles deduplication, updates, and item type classification.
         """
         from app.models import AuctionItem
         from sqlalchemy import select
         from datetime import datetime
+        from app.utils.item_type_detection import detect_item_type_from_dict
 
         for item_data in items:
+            # Auto-classify item type if not already set
+            if not item_data.get("item_type"):
+                item_type = detect_item_type_from_dict(item_data)
+                item_data["item_type"] = item_type.value
+
             # Check if item already exists
             result = await self.db.execute(
                 select(AuctionItem).where(

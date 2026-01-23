@@ -15,6 +15,7 @@ export interface AuctionItem {
   certNumber?: string;
   category?: string;
   sport?: string;
+  itemType?: string;  // CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER
   status: string;
   isWatched: boolean;
   altPriceEstimate?: number;

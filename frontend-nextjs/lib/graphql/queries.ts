@@ -13,6 +13,7 @@ export const GET_AUCTION_ITEMS = gql`
     $maxBid: Float
     $status: String
     $sortBy: String
+    $itemType: String
   ) {
     auctionItems(
       page: $page
@@ -26,6 +27,7 @@ export const GET_AUCTION_ITEMS = gql`
       maxBid: $maxBid
       status: $status
       sortBy: $sortBy
+      itemType: $itemType
     ) {
       items {
         id
@@ -44,6 +46,7 @@ export const GET_AUCTION_ITEMS = gql`
         certNumber
         category
         sport
+        itemType
         status
         isWatched
         marketValueLow

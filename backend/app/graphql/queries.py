@@ -54,6 +54,7 @@ class Query:
         max_bid: Optional[float] = None,
         status: str = "Live",
         sort_by: str = "end_time",
+        item_type: Optional[str] = None,
     ) -> PaginatedAuctionItems:
         """
         Get paginated list of auction items with filtering
@@ -70,6 +71,7 @@ class Query:
             max_bid: Maximum current bid
             status: Filter by status (default: Live)
             sort_by: Sort order (end_time, price_low, price_high, bid_count, recent)
+            item_type: Filter by item type (CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER)
         """
         db = await get_db_session()
 
@@ -101,6 +103,8 @@ class Query:
             filters.append(AuctionItemModel.current_bid >= min_bid)
         if max_bid is not None:
             filters.append(AuctionItemModel.current_bid <= max_bid)
+        if item_type:
+            filters.append(AuctionItemModel.item_type == item_type)
 
         # Use FTS5 for fast full-text search
         fts_ids: Optional[Set[int]] = None

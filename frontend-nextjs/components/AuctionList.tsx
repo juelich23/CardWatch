@@ -35,49 +35,12 @@ const sortByMap: Record<SortOption, string> = {
   bestValue: 'end_time', // bestValue requires client-side sorting (needs market value data)
 };
 
-// Map frontend itemType to category filter for server
-const itemTypeToCategory: Record<ItemTypeFilter, string | undefined> = {
+// Map frontend itemType to backend item_type values
+const itemTypeMap: Record<ItemTypeFilter, string | undefined> = {
   '': undefined,
-  cards: undefined, // Cards filter needs client-side (based on title keywords)
-  memorabilia: undefined, // Same
-  autographs: undefined, // Same
-};
-
-// Helper to detect if an item is a trading card
-const isCardItem = (item: AuctionItem): boolean => {
-  if (item.gradingCompany) return true;
-  const title = (item.title || '').toLowerCase();
-  const cardKeywords = [
-    'card', 'rookie', 'topps', 'panini', 'bowman', 'fleer', 'upper deck',
-    'prizm', 'chrome', 'refractor', 'auto #', '/10', '/25', '/50', '/99',
-    'psa', 'bgs', 'sgc', 'cgc', 'gem mint', 'mint 9', 'mint 10'
-  ];
-  return cardKeywords.some(kw => title.includes(kw));
-};
-
-const isMemorabiliaItem = (item: AuctionItem): boolean => {
-  const title = (item.title || '').toLowerCase();
-  const memorabiliaKeywords = [
-    'jersey', 'helmet', 'ball', 'bat', 'glove', 'cleats', 'shoes',
-    'game-used', 'game used', 'game worn', 'equipment', 'ring', 'trophy',
-    'ticket', 'stub', 'program', 'photo', 'poster', 'pennant'
-  ];
-  return memorabiliaKeywords.some(kw => title.includes(kw)) && !isCardItem(item);
-};
-
-const isAutographItem = (item: AuctionItem): boolean => {
-  const title = (item.title || '').toLowerCase();
-  const autographKeywords = ['signed', 'autograph', 'signature', 'auto '];
-  return autographKeywords.some(kw => title.includes(kw)) && !isCardItem(item);
-};
-
-// Apply client-side item type filter
-const filterByItemType = (items: AuctionItem[], itemType: ItemTypeFilter): AuctionItem[] => {
-  if (!itemType) return items;
-  if (itemType === 'cards') return items.filter(isCardItem);
-  if (itemType === 'memorabilia') return items.filter(isMemorabiliaItem);
-  if (itemType === 'autographs') return items.filter(isAutographItem);
-  return items;
+  cards: 'CARD',
+  memorabilia: 'MEMORABILIA',
+  autographs: 'AUTOGRAPH',
 };
 
 // Apply client-side bestValue sorting
@@ -150,7 +113,8 @@ export function AuctionList() {
     minBid: minPrice ? parseFloat(minPrice) : undefined,
     maxBid: maxPrice ? parseFloat(maxPrice) : undefined,
     sortBy: sortByMap[sortBy] || 'end_time',
-  }), [auctionHouse, sport, searchInput, minPrice, maxPrice, sortBy]);
+    itemType: itemTypeMap[itemType] || undefined,
+  }), [auctionHouse, sport, searchInput, minPrice, maxPrice, sortBy, itemType]);
 
   // Main query with server-side filtering
   const { data, loading, error, fetchMore } = useQuery<{
@@ -171,14 +135,14 @@ export function AuctionList() {
   useEffect(() => {
     if (data?.auctionItems?.items && currentPage === 1) {
       let items = [...data.auctionItems.items];
-      items = filterByItemType(items, itemType);
+      // Server handles item_type filtering now
       if (sortBy === 'bestValue') {
         items = sortByBestValue(items);
       }
       setDisplayedItems(items);
       setHasMore(data.auctionItems.hasMore);
     }
-  }, [data, itemType, sortBy, currentPage]);
+  }, [data, sortBy, currentPage]);
 
   // Load more items function
   const loadMoreItems = useCallback(async () => {
@@ -195,8 +159,8 @@ export function AuctionList() {
       });
 
       if (result.data?.auctionItems?.items) {
-        let newItems = [...result.data.auctionItems.items];
-        newItems = filterByItemType(newItems, itemType);
+        const newItems = [...result.data.auctionItems.items];
+        // Server handles item_type filtering now
 
         setDisplayedItems(prev => {
           const existingIds = new Set(prev.map(item => item.id));
@@ -217,7 +181,7 @@ export function AuctionList() {
       isLoadingRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [fetchMore, queryVariables, itemType, sortBy, hasMore, currentPage]);
+  }, [fetchMore, queryVariables, sortBy, hasMore, currentPage]);
 
   // Ref for sentinel element
   const sentinelRef = useRef<HTMLDivElement>(null);
