@@ -103,9 +103,8 @@ class Query:
             filters.append(AuctionItemModel.current_bid >= min_bid)
         if max_bid is not None:
             filters.append(AuctionItemModel.current_bid <= max_bid)
-        # COMMENTED OUT: Add column to DB first via Supabase
-        # if item_type:
-        #     filters.append(AuctionItemModel.item_type == item_type)
+        if item_type:
+            filters.append(AuctionItemModel.item_type == item_type)
 
         # Use FTS5 for fast full-text search
         fts_ids: Optional[Set[int]] = None

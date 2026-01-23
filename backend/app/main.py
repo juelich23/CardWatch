@@ -96,9 +96,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("Database initialized")
 
-    # Run pending migrations - DISABLED: Add column manually via Supabase to avoid timeout
+    # Run pending migrations (item_type column added manually)
     # await run_migrations()
-    print("Migrations skipped (run manually via Supabase)")
+    print("Migrations skipped (item_type column added manually)")
 
     # Start the scheduler
     scheduler.start()

@@ -69,7 +69,7 @@ class AuctionItem(Base):
     description: Mapped[Optional[str]] = mapped_column(String)
     category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
     sport: Mapped[Optional[str]] = mapped_column(String(20), index=True)  # Sport category
-    # item_type: Mapped[Optional[str]] = mapped_column(String(20), index=True)  # CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER - COMMENTED OUT: Add column to DB first via Supabase
+    item_type: Mapped[Optional[str]] = mapped_column(String(20), index=True)  # CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER
 
     # Images
     image_url: Mapped[Optional[str]] = mapped_column(String(1000))

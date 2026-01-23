@@ -46,6 +46,7 @@ export const GET_AUCTION_ITEMS = gql`
         certNumber
         category
         sport
+        itemType
         status
         isWatched
         marketValueLow

@@ -43,7 +43,7 @@ class AuctionItemType:
     description: Optional[str] = None
     category: Optional[str] = None
     sport: Optional[str] = None
-    # item_type: Optional[str] = None  # CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER - COMMENTED OUT: Add column to DB first
+    item_type: Optional[str] = None  # CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER
 
     # Images
     image_url: Optional[str] = None
@@ -137,7 +137,7 @@ def auction_item_from_model(item, is_watched: bool = None) -> AuctionItemType:
         description=item.description,
         category=item.category,
         sport=item.sport,
-        # item_type=item.item_type,  # COMMENTED OUT: Add column to DB first
+        item_type=item.item_type,
         image_url=item.image_url,
         current_bid=item.current_bid,
         starting_bid=item.starting_bid,
