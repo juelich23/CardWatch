@@ -343,6 +343,7 @@ export function AuctionList() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-4xl font-bold text-text">Auctions</h1>
+            <span className="text-xs text-muted bg-panel px-2 py-1 rounded">v0.2</span>
           </div>
 
           {/* Saved Searches Actions - Compact on Mobile */}
