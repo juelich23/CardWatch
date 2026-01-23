@@ -155,12 +155,12 @@ SEALED_KEYWORDS = [
 ]
 
 # Video game keywords - graded games should NOT be classified as cards
+# Be specific to avoid matching Pokemon TCG cards
 VIDEO_GAME_KEYWORDS = [
-    "nintendo", "game boy", "gameboy", "playstation", "xbox", "sega",
-    "genesis", "dreamcast", "n64", "gamecube", "wii", "nes", "snes",
-    "atari", "video game", "cartridge", "vga ", "wata ", "cgc games",
-    "pokemon red", "pokemon blue", "pokemon yellow", "pokemon gold", "pokemon silver",
-    "super mario", "zelda", "metroid", "mega man", "final fantasy",
+    "game boy", "gameboy", "playstation", "xbox", "sega genesis",
+    "dreamcast", "n64", "gamecube", "wii u", "nes ", "snes ",
+    "atari", "video game", "vga graded", "wata graded", "cgc games",
+    "game cartridge", "game disc", "game pak",
 ]
 
 # Words that indicate NOT a card even if other card keywords present
@@ -172,9 +172,9 @@ MEMORABILIA_OVERRIDE = [
     "original photo", "wire photo", "press photo",
     "full ticket", "ticket stub", "game program",
     "bobblehead", "figurine", "statue",
-    # Video games
-    "nintendo", "game boy", "gameboy", "playstation", "xbox", "sega",
-    "cartridge", "vga ", "wata ",
+    # Video games (be specific to avoid matching Pokemon TCG)
+    "game boy", "gameboy", "playstation", "xbox", "sega genesis",
+    "video game", "vga graded", "wata graded",
 ]
 
 
