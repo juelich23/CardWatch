@@ -15,7 +15,7 @@ export default function WatchlistPage() {
   useEffect(() => {
     setMounted(true);
   }, []);
-  const [includeEnded, setIncludeEnded] = useState(true);
+  const [includeEnded, setIncludeEnded] = useState(false);
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
