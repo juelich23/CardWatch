@@ -187,9 +187,9 @@ export default function WatchlistPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {items.map((item) => (
                 <div key={item.id} className="relative">
-                  {/* Ended overlay */}
+                  {/* Ended overlay - pointer-events-none allows clicking through to card */}
                   {isEnded(item.endTime) && (
-                    <div className="absolute inset-0 bg-background/70 z-10 flex items-center justify-center rounded-lg">
+                    <div className="absolute inset-0 bg-background/50 z-10 flex items-center justify-center rounded-lg pointer-events-none">
                       <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1 rounded-full text-sm font-medium">
                         Auction Ended
                       </span>
