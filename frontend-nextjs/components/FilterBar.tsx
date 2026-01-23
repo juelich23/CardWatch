@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useFilters, type SortOption, type ItemTypeFilter, type SportFilterType } from '@/lib/providers/FilterProvider';
 import { useAISearch } from '@/lib/providers/AISearchProvider';
@@ -87,6 +87,26 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
   const { openAISearch } = useAISearch();
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
+  // Local search state with debounce
+  const [localSearch, setLocalSearch] = useState(searchInput);
+  const debounceRef = useRef<NodeJS.Timeout>();
+
+  // Sync local state when global state changes (e.g., from saved search)
+  useEffect(() => {
+    setLocalSearch(searchInput);
+  }, [searchInput]);
+
+  // Debounced search handler
+  const handleSearchChange = (value: string) => {
+    setLocalSearch(value);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => {
+      setSearchInput(value);
+    }, 500);
+  };
+
   const activeFilters = [
     auctionHouse && { key: 'house', label: auctionHouses.find(h => h.value === auctionHouse)?.label || auctionHouse, onRemove: () => setAuctionHouse('') },
     sport && { key: 'sport', label: sports.find(s => s.value === sport)?.label || sport, onRemove: () => setSport('') },
@@ -124,13 +144,13 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
             <Input
               type="text"
               placeholder="Search items..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
+              value={localSearch}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="pl-9 bg-panel border-border text-text placeholder:text-muted h-10"
             />
-            {searchInput && (
+            {localSearch && (
               <button
-                onClick={() => setSearchInput('')}
+                onClick={() => { setLocalSearch(''); setSearchInput(''); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
               >
                 <XIcon className="w-4 h-4" />
@@ -335,8 +355,8 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
           <Input
             type="text"
             placeholder="Search items..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            value={localSearch}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9 w-[200px] bg-panel border-border text-text placeholder:text-muted"
           />
         </div>
