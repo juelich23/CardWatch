@@ -154,15 +154,27 @@ SEALED_KEYWORDS = [
     "fasc", "factory authenticated",
 ]
 
+# Video game keywords - graded games should NOT be classified as cards
+VIDEO_GAME_KEYWORDS = [
+    "nintendo", "game boy", "gameboy", "playstation", "xbox", "sega",
+    "genesis", "dreamcast", "n64", "gamecube", "wii", "nes", "snes",
+    "atari", "video game", "cartridge", "vga ", "wata ", "cgc games",
+    "pokemon red", "pokemon blue", "pokemon yellow", "pokemon gold", "pokemon silver",
+    "super mario", "zelda", "metroid", "mega man", "final fantasy",
+]
+
 # Words that indicate NOT a card even if other card keywords present
 MEMORABILIA_OVERRIDE = [
     "game-worn", "game worn", "game-used jersey", "game-used helmet",
     "game-used bat", "game-used ball", "game-used equipment",
-    "player-worn", "match-worn", "match worn",
+    "player-worn", "match-worn", "match worn", "coach-worn", "coach worn",
     "trophy", "championship ring", "ring ceremony",
     "original photo", "wire photo", "press photo",
     "full ticket", "ticket stub", "game program",
     "bobblehead", "figurine", "statue",
+    # Video games
+    "nintendo", "game boy", "gameboy", "playstation", "xbox", "sega",
+    "cartridge", "vga ", "wata ",
 ]
 
 
@@ -192,9 +204,16 @@ def detect_item_type(
     cat_lower = (category or "").lower()
     combined_text = f"{title_lower} {desc_lower} {cat_lower}"
 
+    # Layer 0: Video games - check BEFORE grading company (graded games exist)
+    if any(kw in combined_text for kw in VIDEO_GAME_KEYWORDS):
+        return ItemType.MEMORABILIA
+
     # Layer 1: Grading company detection
     # If item has a grading company field set, it's almost certainly a card
     if grading_company:
+        # But check for memorabilia override first
+        if any(override in combined_text for override in MEMORABILIA_OVERRIDE):
+            return ItemType.MEMORABILIA
         return ItemType.CARD
 
     # Check for grading company mentions in title
