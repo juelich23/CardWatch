@@ -148,13 +148,15 @@ class BaseScraper(ABC):
         from app.models import AuctionItem
         from sqlalchemy import select
         from datetime import datetime
-        from app.utils.item_type_detection import detect_item_type_from_dict
+        # COMMENTED OUT: Add column to DB first via Supabase
+        # from app.utils.item_type_detection import detect_item_type_from_dict
 
         for item_data in items:
+            # COMMENTED OUT: Add column to DB first via Supabase
             # Auto-classify item type if not already set
-            if not item_data.get("item_type"):
-                item_type = detect_item_type_from_dict(item_data)
-                item_data["item_type"] = item_type.value
+            # if not item_data.get("item_type"):
+            #     item_type = detect_item_type_from_dict(item_data)
+            #     item_data["item_type"] = item_type.value
 
             # Check if item already exists
             result = await self.db.execute(
