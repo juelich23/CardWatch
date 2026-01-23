@@ -89,7 +89,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
 
   // Local search state with debounce
   const [localSearch, setLocalSearch] = useState(searchInput);
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync local state when global state changes (e.g., from saved search)
   useEffect(() => {
