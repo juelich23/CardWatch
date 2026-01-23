@@ -74,8 +74,10 @@ CARD_STRONG_INDICATORS = [
 # Memorabilia keywords - physical items that aren't cards
 MEMORABILIA_KEYWORDS = [
     # Clothing/Equipment
-    "jersey", "game-worn", "game worn", "game-used jersey", "player-worn",
+    "jersey", "game-worn", "game worn", "game-used jersey", "player-worn", "player worn",
+    "coach-worn", "coach worn", "team-issued", "team issued",
     "uniform", "warm-up", "warmup", "shooting shirt", "practice jersey",
+    "sweater", "vest", "jacket", "coat", "pants", "shorts",
     "cleats", "shoes", "sneakers", "game-worn shoes", "player exclusive",
     "helmet", "batting helmet", "football helmet", "hockey helmet",
     "glove", "batting glove", "baseball glove", "mitt", "catcher's mitt",
