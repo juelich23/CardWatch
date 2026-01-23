@@ -106,36 +106,14 @@ class Query:
         if item_type:
             filters.append(AuctionItemModel.item_type == item_type)
 
-        # Use FTS5 for fast full-text search
-        fts_ids: Optional[Set[int]] = None
+        # Search using ILIKE (works on both SQLite and PostgreSQL)
         if search:
-            # Escape special FTS5 characters and build query
-            fts_search = search.replace('"', '""').replace("'", "''")
-            # Use FTS5 MATCH for fast full-text search
-            fts_query = text(
-                "SELECT rowid FROM auction_items_fts WHERE auction_items_fts MATCH :search"
+            search_term = f"%{search}%"
+            search_filter = or_(
+                AuctionItemModel.title.ilike(search_term),
+                AuctionItemModel.description.ilike(search_term),
             )
-            try:
-                fts_result = await db.execute(fts_query, {"search": f'"{fts_search}"'})
-                fts_ids = set(row[0] for row in fts_result.fetchall())
-                if fts_ids:
-                    filters.append(AuctionItemModel.id.in_(fts_ids))
-                else:
-                    # No FTS matches, return empty result
-                    return PaginatedAuctionItems(
-                        items=[],
-                        total=0,
-                        page=page,
-                        page_size=page_size,
-                        has_more=False,
-                    )
-            except Exception:
-                # Fallback to LIKE if FTS5 fails (e.g., table doesn't exist)
-                search_filter = or_(
-                    AuctionItemModel.title.ilike(f"%{search}%"),
-                    AuctionItemModel.description.ilike(f"%{search}%"),
-                )
-                filters.append(search_filter)
+            filters.append(search_filter)
 
         if filters:
             query = query.where(*filters)
