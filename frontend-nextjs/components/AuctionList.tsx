@@ -125,12 +125,11 @@ export function AuctionList() {
   const [mounted, setMounted] = useState(false);
   const [displayedItems, setDisplayedItems] = useState<AuctionItem[]>([]);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
 
-  // Use refs to avoid stale closures in the observer callback
-  const currentPageRef = useRef(1);
-  const hasMoreRef = useRef(true);
-  const isLoadingMoreRef = useRef(false);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  // Ref to track loading state for observer callback
+  const isLoadingRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -164,32 +163,32 @@ export function AuctionList() {
 
   // Reset when filters change
   useEffect(() => {
-    currentPageRef.current = 1;
-    hasMoreRef.current = true;
+    setCurrentPage(1);
+    setHasMore(true);
     setDisplayedItems([]);
   }, [searchInput, auctionHouse, sortBy, minPrice, maxPrice, itemType, sport]);
 
   // Process initial data (page 1)
   useEffect(() => {
-    if (data?.auctionItems?.items && currentPageRef.current === 1) {
+    if (data?.auctionItems?.items && currentPage === 1) {
       let items = [...data.auctionItems.items];
       items = filterByItemType(items, itemType);
       if (sortBy === 'bestValue') {
         items = sortByBestValue(items);
       }
       setDisplayedItems(items);
-      hasMoreRef.current = data.auctionItems.hasMore;
+      setHasMore(data.auctionItems.hasMore);
     }
-  }, [data, itemType, sortBy]);
+  }, [data, itemType, sortBy, currentPage]);
 
-  // Load more items function using refs to avoid stale closures
+  // Load more items function
   const loadMoreItems = useCallback(async () => {
-    if (isLoadingMoreRef.current || !hasMoreRef.current) return;
+    if (isLoadingRef.current || !hasMore) return;
 
-    isLoadingMoreRef.current = true;
+    isLoadingRef.current = true;
     setIsLoadingMore(true);
 
-    const nextPage = currentPageRef.current + 1;
+    const nextPage = currentPage + 1;
 
     try {
       const result = await fetchMore({
@@ -210,38 +209,40 @@ export function AuctionList() {
           return [...prev, ...uniqueNewItems];
         });
 
-        currentPageRef.current = nextPage;
-        hasMoreRef.current = result.data.auctionItems.hasMore;
+        setCurrentPage(nextPage);
+        setHasMore(result.data.auctionItems.hasMore);
       }
     } catch (err) {
       console.error('Error loading more items:', err);
     } finally {
-      isLoadingMoreRef.current = false;
+      isLoadingRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [fetchMore, queryVariables, itemType, sortBy]);
+  }, [fetchMore, queryVariables, itemType, sortBy, hasMore, currentPage]);
 
-  // Infinite scroll observer - set up once and use refs for current values
+  // Ref for sentinel element
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Infinite scroll observer
   useEffect(() => {
-    const sentinel = loadMoreRef.current;
-    if (!sentinel) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore || loading) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isLoadingMoreRef.current && hasMoreRef.current) {
+        if (entries[0].isIntersecting && !isLoadingRef.current) {
           loadMoreItems();
         }
       },
-      { rootMargin: '600px', threshold: 0 }
+      { rootMargin: '800px', threshold: 0.1 }
     );
 
     observer.observe(sentinel);
 
     return () => observer.disconnect();
-  }, [loadMoreItems]);
+  }, [hasMore, loading, loadMoreItems]);
 
   const totalItems = data?.auctionItems?.total || 0;
-  const hasMore = hasMoreRef.current;
 
   // Fetch saved searches when user changes
   useEffect(() => {
@@ -343,7 +344,6 @@ export function AuctionList() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-4xl font-bold text-text">Auctions</h1>
-            <span className="text-xs text-muted bg-panel px-2 py-1 rounded">v0.2</span>
           </div>
 
           {/* Saved Searches Actions - Compact on Mobile */}
@@ -440,7 +440,7 @@ export function AuctionList() {
             </div>
 
             {/* Infinite Scroll Sentinel */}
-            <div ref={loadMoreRef} className="flex justify-center py-8">
+            <div ref={sentinelRef} className="flex justify-center py-8">
               {isLoadingMore && (
                 <div className="flex items-center gap-2 text-text-2">
                   <LoadingSpinner />
