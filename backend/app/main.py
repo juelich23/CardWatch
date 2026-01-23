@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from strawberry.fastapi import GraphQLRouter
-from app.database import init_db, get_db
+from app.database import init_db, get_db, async_session_maker
 from app.config import get_settings
 from app.graphql.schema import schema
 from app.api.auth import router as auth_router
@@ -13,8 +13,31 @@ from app.api.scheduler import router as scheduler_router
 from app.services.auth import AuthService
 from app.services.scheduler import scheduler
 from app.services.scraper_jobs import SCRAPER_JOBS
+from sqlalchemy import text
 
 settings = get_settings()
+
+
+async def run_migrations():
+    """Run pending database migrations on startup."""
+    async with async_session_maker() as session:
+        # Check if item_type column exists
+        check_query = text("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'auction_items' AND column_name = 'item_type'
+        """)
+        result = await session.execute(check_query)
+        if result.fetchone() is None:
+            print("Migration: Adding item_type column...")
+            await session.execute(text(
+                "ALTER TABLE auction_items ADD COLUMN item_type VARCHAR(20)"
+            ))
+            await session.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
+            ))
+            await session.commit()
+            print("Migration: item_type column added successfully")
 
 
 async def get_context(request: Request):
@@ -38,6 +61,10 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     print("Database initialized")
+
+    # Run pending migrations
+    await run_migrations()
+    print("Migrations complete")
 
     # Start the scheduler
     scheduler.start()
