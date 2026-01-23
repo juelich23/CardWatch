@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useQuery } from '@apollo/client/react';
 import { AuctionCard } from './AuctionCard';
 import { AuctionGridSkeleton } from './AuctionCardSkeleton';
@@ -124,13 +124,13 @@ export function AuctionList() {
 
   const [mounted, setMounted] = useState(false);
   const [displayedItems, setDisplayedItems] = useState<AuctionItem[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // Refs for infinite scroll
+  // Use refs to avoid stale closures in the observer callback
+  const currentPageRef = useRef(1);
+  const hasMoreRef = useRef(true);
+  const isLoadingMoreRef = useRef(false);
   const loadMoreRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -141,8 +141,8 @@ export function AuctionList() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [loadingSavedSearches, setLoadingSavedSearches] = useState(false);
 
-  // Build query variables from filters (always page 1 for initial load)
-  const queryVariables = {
+  // Memoize query variables to prevent unnecessary re-renders
+  const queryVariables = useMemo(() => ({
     page: 1,
     pageSize: PAGE_SIZE,
     status: 'Live',
@@ -152,48 +152,44 @@ export function AuctionList() {
     minBid: minPrice ? parseFloat(minPrice) : undefined,
     maxBid: maxPrice ? parseFloat(maxPrice) : undefined,
     sortBy: sortByMap[sortBy] || 'end_time',
-  };
+  }), [auctionHouse, sport, searchInput, minPrice, maxPrice, sortBy]);
 
   // Main query with server-side filtering
-  const { data, loading, error, fetchMore, refetch } = useQuery<{
+  const { data, loading, error, fetchMore } = useQuery<{
     auctionItems: { items: AuctionItem[]; total: number; hasMore: boolean };
   }>(GET_AUCTION_ITEMS, {
     variables: queryVariables,
     fetchPolicy: 'cache-and-network',
-    notifyOnNetworkStatusChange: true,
   });
 
-  // Reset and refetch when filters change
+  // Reset when filters change
   useEffect(() => {
-    setCurrentPage(1);
+    currentPageRef.current = 1;
+    hasMoreRef.current = true;
     setDisplayedItems([]);
-    setHasMore(true);
   }, [searchInput, auctionHouse, sortBy, minPrice, maxPrice, itemType, sport]);
 
-  // Process initial data
+  // Process initial data (page 1)
   useEffect(() => {
-    if (data?.auctionItems?.items && currentPage === 1) {
+    if (data?.auctionItems?.items && currentPageRef.current === 1) {
       let items = [...data.auctionItems.items];
-
-      // Apply client-side itemType filter (can't be done on server)
       items = filterByItemType(items, itemType);
-
-      // Apply client-side bestValue sort if needed
       if (sortBy === 'bestValue') {
         items = sortByBestValue(items);
       }
-
       setDisplayedItems(items);
-      setHasMore(data.auctionItems.hasMore);
+      hasMoreRef.current = data.auctionItems.hasMore;
     }
-  }, [data, itemType, sortBy, currentPage]);
+  }, [data, itemType, sortBy]);
 
-  // Load more items function
+  // Load more items function using refs to avoid stale closures
   const loadMoreItems = useCallback(async () => {
-    if (isLoadingMore || !hasMore) return;
+    if (isLoadingMoreRef.current || !hasMoreRef.current) return;
 
+    isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
-    const nextPage = currentPage + 1;
+
+    const nextPage = currentPageRef.current + 1;
 
     try {
       const result = await fetchMore({
@@ -202,61 +198,50 @@ export function AuctionList() {
 
       if (result.data?.auctionItems?.items) {
         let newItems = [...result.data.auctionItems.items];
-
-        // Apply client-side filters
         newItems = filterByItemType(newItems, itemType);
 
-        // Append new items, avoiding duplicates
         setDisplayedItems(prev => {
           const existingIds = new Set(prev.map(item => item.id));
           const uniqueNewItems = newItems.filter(item => !existingIds.has(item.id));
 
-          // If bestValue sort, re-sort the entire combined array
           if (sortBy === 'bestValue') {
             return sortByBestValue([...prev, ...uniqueNewItems]);
           }
-
           return [...prev, ...uniqueNewItems];
         });
 
-        setCurrentPage(nextPage);
-        setHasMore(result.data.auctionItems.hasMore);
+        currentPageRef.current = nextPage;
+        hasMoreRef.current = result.data.auctionItems.hasMore;
       }
     } catch (err) {
       console.error('Error loading more items:', err);
     } finally {
+      isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, hasMore, currentPage, fetchMore, queryVariables, itemType, sortBy]);
+  }, [fetchMore, queryVariables, itemType, sortBy]);
 
-  // Infinite scroll observer
+  // Infinite scroll observer - set up once and use refs for current values
   useEffect(() => {
-    if (loading && displayedItems.length === 0) return;
+    const sentinel = loadMoreRef.current;
+    if (!sentinel) return;
 
-    // Disconnect previous observer
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-    }
-
-    if (!hasMore) return;
-
-    observerRef.current = new IntersectionObserver(
+    const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isLoadingMore && hasMore) {
+        if (entries[0].isIntersecting && !isLoadingMoreRef.current && hasMoreRef.current) {
           loadMoreItems();
         }
       },
-      { rootMargin: '400px' }
+      { rootMargin: '600px', threshold: 0 }
     );
 
-    if (loadMoreRef.current) {
-      observerRef.current.observe(loadMoreRef.current);
-    }
+    observer.observe(sentinel);
 
-    return () => observerRef.current?.disconnect();
-  }, [loading, hasMore, isLoadingMore, loadMoreItems, displayedItems.length]);
+    return () => observer.disconnect();
+  }, [loadMoreItems]);
 
   const totalItems = data?.auctionItems?.total || 0;
+  const hasMore = hasMoreRef.current;
 
   // Fetch saved searches when user changes
   useEffect(() => {
