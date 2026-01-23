@@ -20,46 +20,58 @@ settings = get_settings()
 
 async def run_migrations():
     """Run pending database migrations on startup."""
+    from app.database import database_url
+    is_postgres = "postgresql" in database_url or "postgres" in database_url
+    print(f"Migration: Starting (is_postgres={is_postgres})")
+
     try:
-        from app.database import database_url
-        is_postgres = "postgresql" in database_url or "postgres" in database_url
-
         async with async_session_maker() as session:
-            # Check if item_type column exists (different SQL for PostgreSQL vs SQLite)
             if is_postgres:
-                check_query = text("""
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name = 'auction_items'
-                    AND column_name = 'item_type'
-                    AND table_schema = 'public'
-                """)
+                # For PostgreSQL, just try to add the column - it will fail if exists
+                try:
+                    print("Migration: Attempting to add item_type column...")
+                    await session.execute(text(
+                        "ALTER TABLE auction_items ADD COLUMN IF NOT EXISTS item_type VARCHAR(20)"
+                    ))
+                    await session.commit()
+                    print("Migration: item_type column added or already exists")
+                except Exception as alter_err:
+                    print(f"Migration: ALTER TABLE result: {alter_err}")
+                    await session.rollback()
+
+                # Try to create index
+                try:
+                    await session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
+                    ))
+                    await session.commit()
+                    print("Migration: index created or already exists")
+                except Exception as idx_err:
+                    print(f"Migration: CREATE INDEX result: {idx_err}")
+                    await session.rollback()
             else:
+                # SQLite path
                 check_query = text("PRAGMA table_info(auction_items)")
-
-            result = await session.execute(check_query)
-
-            # Determine if column exists
-            if is_postgres:
-                column_exists = result.fetchone() is not None
-            else:
+                result = await session.execute(check_query)
                 columns = result.fetchall()
                 column_exists = any(col[1] == 'item_type' for col in columns)
 
-            if not column_exists:
-                print("Migration: Adding item_type column...")
-                await session.execute(text(
-                    "ALTER TABLE auction_items ADD COLUMN item_type VARCHAR(20)"
-                ))
-                await session.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
-                ))
-                await session.commit()
-                print("Migration: item_type column added successfully")
-            else:
-                print("Migration: item_type column already exists")
+                if not column_exists:
+                    print("Migration: Adding item_type column (SQLite)...")
+                    await session.execute(text(
+                        "ALTER TABLE auction_items ADD COLUMN item_type VARCHAR(20)"
+                    ))
+                    await session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
+                    ))
+                    await session.commit()
+                    print("Migration: item_type column added successfully")
+                else:
+                    print("Migration: item_type column already exists (SQLite)")
     except Exception as e:
-        print(f"Migration warning: {e}")
+        print(f"Migration error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def get_context(request: Request):
