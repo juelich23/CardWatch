@@ -126,7 +126,7 @@ class Query:
         elif sort_by == "bid_count":
             query = query.order_by(AuctionItemModel.bid_count.desc())
         elif sort_by == "recent":
-            query = query.order_by(AuctionItemModel.id.desc())
+            query = query.order_by(AuctionItemModel.created_at.desc())
         else:  # default: end_time
             query = query.order_by(AuctionItemModel.end_time.asc())
 
