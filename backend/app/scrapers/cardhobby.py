@@ -4,7 +4,7 @@ import os
 import json
 import re
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy import select
@@ -312,10 +312,15 @@ Output ONLY the translations, one per line, with the same numbering (1., 2., etc
                         if current_bid < min_price:
                             continue
 
-                        # Parse end time
+                        # Parse end time - CardHobby uses China Standard Time (UTC+8)
                         end_time_str = item.get("EffectiveDate", "")
                         try:
-                            end_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+                            # Parse as naive datetime (in CST)
+                            local_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+                            # Convert from CST (UTC+8) to UTC
+                            cst = timezone(timedelta(hours=8))
+                            local_aware = local_time.replace(tzinfo=cst)
+                            end_time = local_aware.astimezone(timezone.utc).replace(tzinfo=None)
                         except:
                             end_time = None
 
