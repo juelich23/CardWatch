@@ -138,7 +138,8 @@ class PristineScraper:
                     timestamp = end_time_elem.get('data-pristine-end-time') or end_time_elem.get('data-timestamp')
                     if timestamp:
                         try:
-                            end_time = datetime.fromtimestamp(int(timestamp))
+                            # Unix timestamps are UTC, so use utcfromtimestamp
+                            end_time = datetime.utcfromtimestamp(int(timestamp))
                         except:
                             pass
 
