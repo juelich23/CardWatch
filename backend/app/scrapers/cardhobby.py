@@ -299,11 +299,6 @@ Output ONLY the translations, one per line, with the same numbering (1., 2., etc
                     print(f"   No more items at page {page}")
                     break
 
-                # Debug: Print first item's keys to see available fields
-                if page == 1 and items:
-                    print(f"   DEBUG - Available API fields: {list(items[0].keys())}")
-                    print(f"   DEBUG - Sample item data: PriceCount={items[0].get('PriceCount')}, BidCount={items[0].get('BidCount')}, OfferCount={items[0].get('OfferCount')}")
-
                 # Filter and transform items
                 for item in items:
                     try:

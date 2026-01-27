@@ -227,8 +227,12 @@ export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps)
             {formatCurrency(item.currentBid)}
           </div>
           <div className="text-[10px] sm:text-xs text-text-2 mt-0.5 sm:mt-1 flex items-center gap-1 sm:gap-2 flex-wrap">
-            <span>{item.bidCount} {item.bidCount === 1 ? 'bid' : 'bids'}</span>
-            <span className="text-border hidden sm:inline">·</span>
+            {item.bidCount > 0 && (
+              <>
+                <span>{item.bidCount} {item.bidCount === 1 ? 'bid' : 'bids'}</span>
+                <span className="text-border hidden sm:inline">·</span>
+              </>
+            )}
             <span className={`${isEndingSoon() ? 'text-red-400 font-medium' : ''}`}>
               {formatTimeRemaining(item.endTime)}
             </span>

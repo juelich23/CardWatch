@@ -101,15 +101,6 @@ class PristineScraper:
 
         normalized_items = []
 
-        # Debug: Print first item's structure to find bid count location
-        if items:
-            first_item = items[0]
-            print(f"   DEBUG - Item data attributes: {[attr for attr in first_item.attrs if 'bid' in attr.lower() or 'count' in attr.lower()]}")
-            high_bid = first_item.find('p', class_='high-bid')
-            if high_bid:
-                print(f"   DEBUG - high-bid attrs: {high_bid.attrs}")
-                print(f"   DEBUG - high-bid text: {high_bid.get_text().strip()[:100]}")
-
         for item_div in items:
             try:
                 venue_id = item_div.get('data-pristine-product-venue-id')
@@ -126,10 +117,10 @@ class PristineScraper:
                     href = link.get('href')
                     item_url = f"{self.base_url}{href}" if href.startswith('/') else href
 
-                # Find current bid and bid count
-                high_bid_elem = item_div.find('p', class_='high-bid')
+                # Find current bid
+                # Note: Pristine listing pages don't include bid count - only available on detail pages
+                high_bid_elem = item_div.find('p', class_='high-bid') or item_div.find('div', class_='high-bid')
                 current_bid = None
-                bid_count = 0
                 if high_bid_elem:
                     bid_data = high_bid_elem.get('data-high-bid')
                     if bid_data:
@@ -140,31 +131,6 @@ class PristineScraper:
                             bid_match = re.search(r'\$?([\d,]+\.?\d*)', bid_text)
                             if bid_match:
                                 current_bid = float(bid_match.group(1).replace(',', ''))
-
-                    # Try to get bid count from data attribute
-                    bid_count_data = high_bid_elem.get('data-bid-count') or high_bid_elem.get('data-bids')
-                    if bid_count_data:
-                        try:
-                            bid_count = int(bid_count_data)
-                        except:
-                            pass
-
-                # Also check for bid count in a separate element
-                if bid_count == 0:
-                    bid_count_elem = item_div.find('span', class_='bid-count') or item_div.find('p', class_='bid-count')
-                    if bid_count_elem:
-                        bid_count_text = bid_count_elem.get_text().strip()
-                        bid_match = re.search(r'(\d+)\s*bids?', bid_count_text, re.IGNORECASE)
-                        if bid_match:
-                            bid_count = int(bid_match.group(1))
-                    else:
-                        # Check for data-pristine-bid-count attribute on item div
-                        bid_count_attr = item_div.get('data-pristine-bid-count') or item_div.get('data-bid-count')
-                        if bid_count_attr:
-                            try:
-                                bid_count = int(bid_count_attr)
-                            except:
-                                pass
 
                 # Find end time
                 end_time_elem = item_div.find('span', class_='end-time')
@@ -200,7 +166,7 @@ class PristineScraper:
                     "image_url": image_url,
                     "current_bid": current_bid,
                     "starting_bid": None,
-                    "bid_count": bid_count,
+                    "bid_count": 0,  # Not available on listing pages
                     "end_time": end_time,
                     "status": "Live",
                     "item_url": item_url,
