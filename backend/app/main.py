@@ -49,6 +49,30 @@ async def run_migrations():
                 except Exception as idx_err:
                     print(f"Migration: CREATE INDEX result: {idx_err}")
                     await session.rollback()
+
+                # Add trigram extension and indexes for fast ILIKE search
+                try:
+                    print("Migration: Adding pg_trgm extension for fast search...")
+                    await session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                    await session.commit()
+                    print("Migration: pg_trgm extension added or already exists")
+                except Exception as ext_err:
+                    print(f"Migration: pg_trgm extension result: {ext_err}")
+                    await session.rollback()
+
+                # Create trigram indexes for title search (most important)
+                try:
+                    print("Migration: Creating trigram index on title...")
+                    await session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_auction_items_title_trgm "
+                        "ON auction_items USING gin (title gin_trgm_ops)"
+                    ))
+                    await session.commit()
+                    print("Migration: title trigram index created or already exists")
+                except Exception as idx_err:
+                    print(f"Migration: title trigram index result: {idx_err}")
+                    await session.rollback()
+
             else:
                 # SQLite path
                 check_query = text("PRAGMA table_info(auction_items)")
@@ -96,9 +120,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("Database initialized")
 
-    # Run pending migrations (item_type column added manually)
-    # await run_migrations()
-    print("Migrations skipped (item_type column added manually)")
+    # Run pending migrations (adds trigram indexes for fast search)
+    await run_migrations()
 
     # Start the scheduler
     scheduler.start()

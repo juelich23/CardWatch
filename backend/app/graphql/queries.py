@@ -106,14 +106,11 @@ class Query:
         if item_type:
             filters.append(AuctionItemModel.item_type == item_type)
 
-        # Search using ILIKE (works on both SQLite and PostgreSQL)
+        # Search using ILIKE on title only (faster, more relevant)
+        # Note: Requires pg_trgm extension and GIN index for fast ILIKE searches
         if search:
             search_term = f"%{search}%"
-            search_filter = or_(
-                AuctionItemModel.title.ilike(search_term),
-                AuctionItemModel.description.ilike(search_term),
-            )
-            filters.append(search_filter)
+            filters.append(AuctionItemModel.title.ilike(search_term))
 
         if filters:
             query = query.where(*filters)
@@ -143,12 +140,16 @@ class Query:
         if has_more:
             items = items[:page_size]  # Remove the extra item
 
-        # Optimize count: skip expensive COUNT(*) when we can detect last page
+        # Optimize count: skip expensive COUNT(*) in certain cases
         if len(items) < page_size:
             # We're on the last page, calculate total from offset + items
             total = offset + len(items)
+        elif search:
+            # For search queries, skip expensive COUNT and estimate
+            # This avoids slow ILIKE count on 60k+ rows
+            total = offset + len(items) + (page_size if has_more else 0)
         else:
-            # Need to run count query
+            # Need to run count query (fast for non-search filters with indexes)
             count_query = select(func.count()).select_from(AuctionItemModel)
             if filters:
                 count_query = count_query.where(*filters)
