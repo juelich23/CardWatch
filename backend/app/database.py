@@ -39,6 +39,8 @@ if is_postgres:
         "connect_args": {
             # Disable prepared statements for pgbouncer compatibility
             "prepare_threshold": None,
+            # Connection timeout in seconds (default is too long)
+            "connect_timeout": 30,
         },
     })
 
@@ -82,7 +84,29 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     # Explicit close() causes IllegalStateChangeError with concurrent pgbouncer requests
 
 
-async def init_db():
-    """Initialize database tables"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def init_db(max_retries: int = 3, retry_delay: float = 2.0):
+    """Initialize database tables with retry logic.
+
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Delay between retries in seconds
+    """
+    import asyncio
+
+    for attempt in range(max_retries):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            print(f"Database initialized successfully (attempt {attempt + 1})")
+            return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Database connection attempt {attempt + 1} failed: {e}")
+                print(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                print(f"Database initialization failed after {max_retries} attempts: {e}")
+                # Don't raise - let the app start anyway
+                # Individual requests will fail if DB is unavailable
+                print("WARNING: App starting without confirmed database connection")

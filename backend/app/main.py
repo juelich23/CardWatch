@@ -151,12 +151,17 @@ async def get_context(request: Request):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    # Startup
-    await init_db()
-    print("Database initialized")
+    # Startup - with error handling to allow app to start even if DB is temporarily unavailable
+    try:
+        await init_db()
+    except Exception as e:
+        print(f"WARNING: Database initialization error (non-fatal): {e}")
 
     # Run pending migrations (adds trigram indexes for fast search)
-    await run_migrations()
+    try:
+        await run_migrations()
+    except Exception as e:
+        print(f"WARNING: Migration error (non-fatal): {e}")
 
     # Start the scheduler
     scheduler.start()
