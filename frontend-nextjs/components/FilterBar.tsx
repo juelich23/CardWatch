@@ -101,7 +101,14 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
     setLocalSearch(value);
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
+      debounceRef.current = null;
     }
+    // If clearing search, update immediately (no debounce)
+    if (!value.trim()) {
+      setSearchInput('');
+      return;
+    }
+    // Otherwise debounce to avoid excessive queries while typing
     debounceRef.current = setTimeout(() => {
       setSearchInput(value);
     }, 500);
@@ -150,7 +157,15 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
             />
             {localSearch && (
               <button
-                onClick={() => { setLocalSearch(''); setSearchInput(''); }}
+                onClick={() => {
+                  // Cancel any pending debounce timer
+                  if (debounceRef.current) {
+                    clearTimeout(debounceRef.current);
+                    debounceRef.current = null;
+                  }
+                  setLocalSearch('');
+                  setSearchInput('');
+                }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
               >
                 <XIcon className="w-4 h-4" />

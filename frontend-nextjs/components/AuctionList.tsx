@@ -117,11 +117,12 @@ export function AuctionList() {
   }), [auctionHouse, sport, searchInput, minPrice, maxPrice, sortBy, itemType]);
 
   // Main query with server-side filtering
+  // Use network-only to ensure fresh results (avoid stale cache issues)
   const { data, loading, error, fetchMore } = useQuery<{
     auctionItems: { items: AuctionItem[]; total: number; hasMore: boolean };
   }>(GET_AUCTION_ITEMS, {
     variables: queryVariables,
-    fetchPolicy: 'cache-and-network',
+    fetchPolicy: 'network-only',
   });
 
   // Reset when filters change
