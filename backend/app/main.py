@@ -19,7 +19,11 @@ settings = get_settings()
 
 
 async def run_migrations():
-    """Run pending database migrations on startup."""
+    """Run pending database migrations on startup.
+
+    Note: Migrations are non-blocking - failures are logged but don't prevent startup.
+    This prevents connection pool timeouts from blocking app startup.
+    """
     from app.database import database_url
     is_postgres = "postgresql" in database_url or "postgres" in database_url
     print(f"Migration: Starting (is_postgres={is_postgres})")
@@ -27,6 +31,17 @@ async def run_migrations():
     try:
         async with async_session_maker() as session:
             if is_postgres:
+                # Check which indexes already exist to avoid unnecessary work
+                try:
+                    result = await session.execute(text(
+                        "SELECT indexname FROM pg_indexes WHERE tablename = 'auction_items'"
+                    ))
+                    existing_indexes = {row[0] for row in result.fetchall()}
+                    print(f"Migration: Existing indexes: {existing_indexes}")
+                except Exception as e:
+                    print(f"Migration: Could not check existing indexes: {e}")
+                    existing_indexes = set()
+
                 # For PostgreSQL, just try to add the column - it will fail if exists
                 try:
                     print("Migration: Attempting to add item_type column...")
@@ -39,39 +54,58 @@ async def run_migrations():
                     print(f"Migration: ALTER TABLE result: {alter_err}")
                     await session.rollback()
 
-                # Try to create index
-                try:
-                    await session.execute(text(
-                        "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
-                    ))
-                    await session.commit()
-                    print("Migration: index created or already exists")
-                except Exception as idx_err:
-                    print(f"Migration: CREATE INDEX result: {idx_err}")
-                    await session.rollback()
+                # Try to create item_type index only if it doesn't exist
+                if "ix_auction_items_item_type" not in existing_indexes:
+                    try:
+                        await session.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_auction_items_item_type ON auction_items (item_type)"
+                        ))
+                        await session.commit()
+                        print("Migration: item_type index created")
+                    except Exception as idx_err:
+                        print(f"Migration: item_type index result: {idx_err}")
+                        await session.rollback()
+                else:
+                    print("Migration: item_type index already exists, skipping")
 
-                # Add trigram extension and indexes for fast ILIKE search
+                # Check if pg_trgm extension exists
                 try:
-                    print("Migration: Adding pg_trgm extension for fast search...")
-                    await session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-                    await session.commit()
-                    print("Migration: pg_trgm extension added or already exists")
-                except Exception as ext_err:
-                    print(f"Migration: pg_trgm extension result: {ext_err}")
-                    await session.rollback()
-
-                # Create trigram indexes for title search (most important)
-                try:
-                    print("Migration: Creating trigram index on title...")
-                    await session.execute(text(
-                        "CREATE INDEX IF NOT EXISTS ix_auction_items_title_trgm "
-                        "ON auction_items USING gin (title gin_trgm_ops)"
+                    result = await session.execute(text(
+                        "SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'"
                     ))
-                    await session.commit()
-                    print("Migration: title trigram index created or already exists")
-                except Exception as idx_err:
-                    print(f"Migration: title trigram index result: {idx_err}")
-                    await session.rollback()
+                    trgm_exists = result.scalar() is not None
+                except Exception:
+                    trgm_exists = False
+
+                if not trgm_exists:
+                    try:
+                        print("Migration: Adding pg_trgm extension for fast search...")
+                        await session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                        await session.commit()
+                        print("Migration: pg_trgm extension added")
+                    except Exception as ext_err:
+                        print(f"Migration: pg_trgm extension result: {ext_err}")
+                        await session.rollback()
+                else:
+                    print("Migration: pg_trgm extension already exists, skipping")
+
+                # Create trigram index only if it doesn't exist
+                if "ix_auction_items_title_trgm" not in existing_indexes:
+                    try:
+                        print("Migration: Creating trigram index on title (this may take a while)...")
+                        await session.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_auction_items_title_trgm "
+                            "ON auction_items USING gin (title gin_trgm_ops)"
+                        ))
+                        await session.commit()
+                        print("Migration: title trigram index created")
+                    except Exception as idx_err:
+                        print(f"Migration: title trigram index result: {idx_err}")
+                        await session.rollback()
+                else:
+                    print("Migration: title trigram index already exists, skipping")
+
+                print("Migration: PostgreSQL migrations complete")
 
             else:
                 # SQLite path
@@ -93,7 +127,8 @@ async def run_migrations():
                 else:
                     print("Migration: item_type column already exists (SQLite)")
     except Exception as e:
-        print(f"Migration error: {e}")
+        # Don't let migration errors prevent startup
+        print(f"Migration error (non-blocking): {e}")
         import traceback
         traceback.print_exc()
 
