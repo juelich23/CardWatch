@@ -269,14 +269,33 @@ class GoldinHTTPScraper(BaseScraper):
                     if isinstance(data, dict) and 'body' in data and isinstance(data['body'], dict):
                         response_lots = data['body'].get('lots', [])
 
-                    # Get grading data from first lot
+                    # Get grading data and image from first lot
                     if response_lots and len(response_lots) > 0:
                         lot = response_lots[0]
+
+                        # Try to extract image URL from detailed response
+                        detail_image_url = None
+                        primary_image_name = lot.get('primary_image_name')
+                        detail_lot_id = lot.get('lot_id') or lot.get('id')
+                        if primary_image_name and detail_lot_id:
+                            detail_image_url = f"https://d2tt46f3mh26nl.cloudfront.net/public/Lots/{detail_lot_id}/{primary_image_name}@3x"
+
+                        # Check images array
+                        if not detail_image_url:
+                            images = lot.get('images') or lot.get('lot_images') or []
+                            if images and isinstance(images, list) and len(images) > 0:
+                                first_image = images[0]
+                                if isinstance(first_image, str):
+                                    detail_image_url = first_image
+                                elif isinstance(first_image, dict):
+                                    detail_image_url = first_image.get('url') or first_image.get('image_url')
+
                         grading_data = {
                             'cert_number': lot.get('cert_number'),
                             'sub_category': lot.get('sub_category'),
                             'grading_company': lot.get('grading_company'),
                             'grade': str(lot.get('grade')) if lot.get('grade') is not None else None,
+                            'image_url': detail_image_url,  # Include image from detailed response
                         }
                         return (slug, grading_data)
 
@@ -310,6 +329,7 @@ class GoldinHTTPScraper(BaseScraper):
 
         # Update items with grading data using the slug mapping
         grading_count = 0
+        image_fixes = 0
         for item in items:
             raw_data = item.get('raw_data', {})
             meta_slug = raw_data.get('meta_slug')
@@ -323,11 +343,18 @@ class GoldinHTTPScraper(BaseScraper):
                 item['grading_company'] = grading_data.get('grading_company')
                 item['grade'] = grading_data.get('grade')
 
+                # If item is missing image_url, use the one from detailed response
+                if not item.get('image_url') and grading_data.get('image_url'):
+                    item['image_url'] = grading_data.get('image_url')
+                    image_fixes += 1
+
                 # Also update raw_data so it's stored in database
                 raw_data.update(grading_data)
                 grading_count += 1
 
         print(f"✅ Added grading data to {grading_count}/{len(items)} items")
+        if image_fixes > 0:
+            print(f"✅ Fixed {image_fixes} missing images from detailed responses")
 
     def _normalize_lot(self, lot_data: Dict) -> Dict:
         """Normalize a single lot from Goldin API"""
@@ -370,14 +397,37 @@ class GoldinHTTPScraper(BaseScraper):
         if primary_image_name and lot_id:
             # Construct the CloudFront URL
             image_url = f"https://d2tt46f3mh26nl.cloudfront.net/public/Lots/{lot_id}/{primary_image_name}@3x"
-        else:
-            # Fallback to other possible image fields
+
+        # Fallback: check for images array
+        if not image_url:
+            images = lot_data.get("images") or lot_data.get("lot_images") or []
+            if images and isinstance(images, list) and len(images) > 0:
+                first_image = images[0]
+                if isinstance(first_image, str):
+                    image_url = first_image
+                elif isinstance(first_image, dict):
+                    image_url = (
+                        first_image.get("url") or
+                        first_image.get("image_url") or
+                        first_image.get("src")
+                    )
+
+        # Fallback: check direct URL fields
+        if not image_url:
             image_url = (
                 lot_data.get("image_url") or
                 lot_data.get("imageUrl") or
                 lot_data.get("image") or
-                lot_data.get("thumbnail")
+                lot_data.get("thumbnail") or
+                lot_data.get("primary_image_url") or
+                lot_data.get("main_image")
             )
+
+        # Fallback: try to construct from lot_id if we have a cdn_image_name
+        if not image_url and lot_id:
+            cdn_image = lot_data.get("cdn_image_name") or lot_data.get("image_name")
+            if cdn_image:
+                image_url = f"https://d2tt46f3mh26nl.cloudfront.net/public/Lots/{lot_id}/{cdn_image}@3x"
 
         # Extract category/type
         category = (
