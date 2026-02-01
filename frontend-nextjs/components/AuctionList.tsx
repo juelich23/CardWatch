@@ -190,9 +190,11 @@ export function AuctionList() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Infinite scroll observer
+  // Don't block on `loading` - we want to allow fetching more even while background refresh happens
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || !hasMore || loading) return;
+    // Only block if we have no items yet (initial load) or no more items to fetch
+    if (!sentinel || !hasMore || displayedItems.length === 0) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -206,7 +208,7 @@ export function AuctionList() {
     observer.observe(sentinel);
 
     return () => observer.disconnect();
-  }, [hasMore, loading, loadMoreItems]);
+  }, [hasMore, displayedItems.length, loadMoreItems]);
 
   const totalItems = data?.auctionItems?.total || 0;
 

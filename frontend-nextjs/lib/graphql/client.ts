@@ -66,8 +66,11 @@ const createApolloClient = () => {
       Query: {
         fields: {
           // Each unique combination of filter args gets its own cache entry
+          // Page is included so each page is cached separately
           auctionItems: {
             keyArgs: [
+              'page',
+              'pageSize',
               'status',
               'auctionHouse',
               'sport',
@@ -77,18 +80,7 @@ const createApolloClient = () => {
               'sortBy',
               'itemType',
             ],
-            merge(existing, incoming, { args }) {
-              // For page 1, replace entirely
-              if (!args?.page || args.page === 1) {
-                return incoming;
-              }
-              // For subsequent pages, merge items
-              if (!existing) return incoming;
-              return {
-                ...incoming,
-                items: [...(existing.items || []), ...(incoming.items || [])],
-              };
-            },
+            // No merge - component manages pagination state
           },
         },
       },
