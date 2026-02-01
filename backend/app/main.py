@@ -105,6 +105,42 @@ async def run_migrations():
                 else:
                     print("Migration: title trigram index already exists, skipping")
 
+                # Fix Card Hobby end_times that were stored without timezone conversion
+                # They were stored as CST but treated as UTC, so they're 8 hours ahead
+                try:
+                    print("Migration: Checking for Card Hobby timezone fix...")
+                    # Check if there are Card Hobby items with end_time in the future that should have ended
+                    # This is a one-time fix - subtract 8 hours from all cardhobby end_times
+                    # Only apply if we haven't done this already (check for a marker)
+                    result = await session.execute(text(
+                        "SELECT COUNT(*) FROM auction_items WHERE auction_house = 'cardhobby' "
+                        "AND end_time > NOW() + INTERVAL '6 hours'"
+                    ))
+                    count = result.scalar()
+                    if count and count > 0:
+                        print(f"Migration: Found {count} Card Hobby items with potentially wrong timezone")
+                        await session.execute(text(
+                            "UPDATE auction_items "
+                            "SET end_time = end_time - INTERVAL '8 hours' "
+                            "WHERE auction_house = 'cardhobby' "
+                            "AND end_time > NOW()"
+                        ))
+                        # Also update status for items that have now ended
+                        await session.execute(text(
+                            "UPDATE auction_items "
+                            "SET status = 'Ended' "
+                            "WHERE auction_house = 'cardhobby' "
+                            "AND end_time < NOW() "
+                            "AND status = 'Live'"
+                        ))
+                        await session.commit()
+                        print("Migration: Card Hobby timezone fix applied")
+                    else:
+                        print("Migration: Card Hobby timezone already correct")
+                except Exception as tz_err:
+                    print(f"Migration: Card Hobby timezone fix result: {tz_err}")
+                    await session.rollback()
+
                 print("Migration: PostgreSQL migrations complete")
 
             else:
