@@ -65,11 +65,29 @@ const createApolloClient = () => {
     typePolicies: {
       Query: {
         fields: {
-          // Each unique combination of args gets its own cache entry
+          // Each unique combination of filter args gets its own cache entry
           auctionItems: {
-            keyArgs: ['status', 'page', 'pageSize'],
-            merge(existing, incoming) {
-              return incoming; // Replace cache with fresh data
+            keyArgs: [
+              'status',
+              'auctionHouse',
+              'sport',
+              'search',
+              'minBid',
+              'maxBid',
+              'sortBy',
+              'itemType',
+            ],
+            merge(existing, incoming, { args }) {
+              // For page 1, replace entirely
+              if (!args?.page || args.page === 1) {
+                return incoming;
+              }
+              // For subsequent pages, merge items
+              if (!existing) return incoming;
+              return {
+                ...incoming,
+                items: [...(existing.items || []), ...(incoming.items || [])],
+              };
             },
           },
         },

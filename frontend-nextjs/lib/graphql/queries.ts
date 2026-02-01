@@ -1,5 +1,6 @@
 import { gql } from '@apollo/client';
 
+// Optimized query for auction list - only fetches fields needed for AuctionCard display
 export const GET_AUCTION_ITEMS = gql`
   query GetAuctionItems(
     $page: Int!
@@ -32,9 +33,7 @@ export const GET_AUCTION_ITEMS = gql`
       items {
         id
         title
-        description
         currentBid
-        startingBid
         bidCount
         endTime
         imageUrl
@@ -43,11 +42,6 @@ export const GET_AUCTION_ITEMS = gql`
         lotNumber
         gradingCompany
         grade
-        certNumber
-        category
-        sport
-        itemType
-        status
         isWatched
         marketValueLow
         marketValueHigh
@@ -55,8 +49,6 @@ export const GET_AUCTION_ITEMS = gql`
         marketValueConfidence
       }
       total
-      page
-      pageSize
       hasMore
     }
   }

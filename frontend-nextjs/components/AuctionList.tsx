@@ -62,7 +62,8 @@ const sortByBestValue = (items: AuctionItem[]): AuctionItem[] => {
   });
 };
 
-const PAGE_SIZE = 40;
+const INITIAL_PAGE_SIZE = 20; // Smaller for fast first paint
+const PAGE_SIZE = 40; // Larger for subsequent pages
 
 export function AuctionList() {
   const { user } = useAuth();
@@ -105,7 +106,7 @@ export function AuctionList() {
   // Memoize query variables to prevent unnecessary re-renders
   const queryVariables = useMemo(() => ({
     page: 1,
-    pageSize: PAGE_SIZE,
+    pageSize: INITIAL_PAGE_SIZE, // Smaller initial load for fast first paint
     status: 'Live',
     auctionHouse: auctionHouse || undefined,
     sport: sport || undefined,
@@ -117,12 +118,13 @@ export function AuctionList() {
   }), [auctionHouse, sport, searchInput, minPrice, maxPrice, sortBy, itemType]);
 
   // Main query with server-side filtering
-  // Use network-only to ensure fresh results (avoid stale cache issues)
+  // Use cache-and-network for fast initial load from cache, then refresh
   const { data, loading, error, fetchMore } = useQuery<{
     auctionItems: { items: AuctionItem[]; total: number; hasMore: boolean };
   }>(GET_AUCTION_ITEMS, {
     variables: queryVariables,
-    fetchPolicy: 'network-only',
+    fetchPolicy: 'cache-and-network',
+    notifyOnNetworkStatusChange: true,
   });
 
   // Reset when filters change
@@ -156,7 +158,7 @@ export function AuctionList() {
 
     try {
       const result = await fetchMore({
-        variables: { ...queryVariables, page: nextPage },
+        variables: { ...queryVariables, page: nextPage, pageSize: PAGE_SIZE },
       });
 
       if (result.data?.auctionItems?.items) {
@@ -285,7 +287,7 @@ export function AuctionList() {
           <h1 className="text-4xl font-bold text-text">Auction Items</h1>
           <p className="text-text-2 mt-2">Loading items...</p>
         </div>
-        <AuctionGridSkeleton count={20} />
+        <AuctionGridSkeleton count={INITIAL_PAGE_SIZE} />
       </div>
     );
   }
