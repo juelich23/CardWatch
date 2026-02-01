@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
-from app.services.scheduler import scheduler
+from app.services.scheduler import scheduler, _circuit_breaker, _scraper_lock
 from app.services.scraper_jobs import SCRAPER_JOBS
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
@@ -153,3 +153,30 @@ async def stop_scheduler():
         return {"message": "Scheduler not running"}
     scheduler.shutdown()
     return {"message": "Scheduler stopped"}
+
+
+@router.get("/circuit-breaker")
+async def get_circuit_breaker_status():
+    """Get circuit breaker status for scrapers."""
+    return {
+        "is_open": _circuit_breaker["is_open"],
+        "failures": _circuit_breaker["failures"],
+        "last_failure": _circuit_breaker["last_failure"].isoformat() if _circuit_breaker["last_failure"] else None,
+        "cooldown_until": _circuit_breaker["cooldown_until"].isoformat() if _circuit_breaker["cooldown_until"] else None,
+        "scraper_lock_held": _scraper_lock.locked(),
+    }
+
+
+@router.post("/circuit-breaker/reset")
+async def reset_circuit_breaker():
+    """Reset the circuit breaker to allow scrapers to run again."""
+    global _circuit_breaker
+    # Import to modify the global in scheduler.py
+    import app.services.scheduler as sched
+    sched._circuit_breaker = {
+        "failures": 0,
+        "last_failure": None,
+        "is_open": False,
+        "cooldown_until": None,
+    }
+    return {"message": "Circuit breaker reset", "status": sched._circuit_breaker}

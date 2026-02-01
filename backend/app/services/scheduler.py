@@ -1,11 +1,17 @@
 """
 Scheduler service for running scrapers on a recurring basis.
 Uses APScheduler for job management.
+
+Key features:
+- Global scraper lock to prevent concurrent scraper execution (prevents DB pool exhaustion)
+- Circuit breaker pattern to pause scrapers on repeated DB errors
+- Job history tracking for monitoring
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Callable, Any
+from functools import wraps
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +19,86 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, JobExecutionEvent
 
 logger = logging.getLogger(__name__)
+
+# Global scraper lock - only one scraper can run at a time
+_scraper_lock = asyncio.Lock()
+
+# Circuit breaker state
+_circuit_breaker = {
+    "failures": 0,
+    "last_failure": None,
+    "is_open": False,
+    "cooldown_until": None,
+}
+
+# Circuit breaker settings
+FAILURE_THRESHOLD = 3  # Open circuit after 3 consecutive failures
+COOLDOWN_SECONDS = 300  # Wait 5 minutes before retrying after circuit opens
+
+
+def with_scraper_lock(func: Callable) -> Callable:
+    """
+    Decorator that ensures only one scraper runs at a time.
+    Also implements circuit breaker pattern for DB errors.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        global _circuit_breaker
+
+        # Check circuit breaker
+        if _circuit_breaker["is_open"]:
+            if _circuit_breaker["cooldown_until"] and datetime.utcnow() < _circuit_breaker["cooldown_until"]:
+                logger.warning(f"Circuit breaker OPEN - skipping {func.__name__} until {_circuit_breaker['cooldown_until']}")
+                return {"skipped": True, "reason": "circuit_breaker_open"}
+            else:
+                # Cooldown expired, reset circuit breaker
+                logger.info("Circuit breaker cooldown expired - resetting")
+                _circuit_breaker = {
+                    "failures": 0,
+                    "last_failure": None,
+                    "is_open": False,
+                    "cooldown_until": None,
+                }
+
+        # Try to acquire lock with timeout
+        try:
+            acquired = await asyncio.wait_for(
+                _scraper_lock.acquire(),
+                timeout=10.0  # Don't wait more than 10 seconds
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Could not acquire scraper lock for {func.__name__} - another scraper is running")
+            return {"skipped": True, "reason": "lock_timeout"}
+
+        try:
+            logger.info(f"Acquired scraper lock for {func.__name__}")
+            result = await func(*args, **kwargs)
+
+            # Success - reset failure count
+            _circuit_breaker["failures"] = 0
+            return result
+
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if this is a DB connection error
+            if "timeout" in error_str or "connection" in error_str or "pool" in error_str:
+                _circuit_breaker["failures"] += 1
+                _circuit_breaker["last_failure"] = datetime.utcnow()
+
+                logger.error(f"DB error in {func.__name__}: {e} (failure #{_circuit_breaker['failures']})")
+
+                if _circuit_breaker["failures"] >= FAILURE_THRESHOLD:
+                    _circuit_breaker["is_open"] = True
+                    _circuit_breaker["cooldown_until"] = datetime.utcnow() + timedelta(seconds=COOLDOWN_SECONDS)
+                    logger.error(f"Circuit breaker OPENED - pausing all scrapers until {_circuit_breaker['cooldown_until']}")
+
+            raise
+
+        finally:
+            _scraper_lock.release()
+            logger.info(f"Released scraper lock for {func.__name__}")
+
+    return wrapper
 
 
 class ScraperScheduler:

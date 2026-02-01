@@ -1,6 +1,9 @@
 """
 Scraper job definitions for scheduled execution.
 Each function handles its own database session management.
+
+Uses global scraper lock to prevent concurrent execution and
+circuit breaker pattern to pause on repeated DB errors.
 """
 import asyncio
 import logging
@@ -12,6 +15,7 @@ from sqlalchemy import select, text
 
 from app.config import get_settings
 from app.models import Auction, AuctionItem
+from app.services.scheduler import with_scraper_lock
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +54,17 @@ def get_db_session():
                 "poolclass": NullPool,
                 "connect_args": {
                     "prepare_threshold": None,
+                    "connect_timeout": 30,  # 30 second connection timeout
                 },
             })
-            print(f"[SCRAPER_JOBS CONFIG v3] Using psycopg driver with NullPool")
+            print(f"[SCRAPER_JOBS CONFIG v4] Using psycopg driver with NullPool and 30s timeout")
 
         _engine = create_async_engine(database_url, **engine_kwargs)
         _async_session = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     return _async_session
 
 
+@with_scraper_lock
 async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
     """
     Scrape CardHobby auctions.
@@ -256,6 +262,7 @@ async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
         raise
 
 
+@with_scraper_lock
 async def scrape_goldin(max_items: int = 1000):
     """Scrape Goldin auctions."""
     logger.info("Starting Goldin scrape")
@@ -275,6 +282,7 @@ async def scrape_goldin(max_items: int = 1000):
             raise
 
 
+@with_scraper_lock
 async def scrape_fanatics(max_items: int = 1000):
     """Scrape Fanatics auctions."""
     logger.info("Starting Fanatics scrape")
@@ -293,6 +301,7 @@ async def scrape_fanatics(max_items: int = 1000):
             raise
 
 
+@with_scraper_lock
 async def scrape_heritage(max_items: int = 1000):
     """Scrape Heritage auctions."""
     logger.info("Starting Heritage scrape")
@@ -311,6 +320,7 @@ async def scrape_heritage(max_items: int = 1000):
             raise
 
 
+@with_scraper_lock
 async def scrape_pristine():
     """Scrape Pristine auctions by category."""
     logger.info("Starting Pristine scrape (by category)")
@@ -329,6 +339,7 @@ async def scrape_pristine():
             raise
 
 
+@with_scraper_lock
 async def cleanup_ended_auctions(days_old: int = 7):
     """
     Clean up ended auctions older than specified days.
