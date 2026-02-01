@@ -18,12 +18,19 @@ from sqlalchemy import text
 settings = get_settings()
 
 
-async def run_migrations():
+async def run_migrations(db_available: bool = True):
     """Run pending database migrations on startup.
 
     Note: Migrations are non-blocking - failures are logged but don't prevent startup.
-    This prevents connection pool timeouts from blocking app startup.
+    Skips entirely if database is not available to avoid wasting time on timeouts.
+
+    Args:
+        db_available: Whether init_db succeeded. If False, skip all migrations.
     """
+    if not db_available:
+        print("Migration: Skipping - database not available")
+        return
+
     from app.database import database_url
     is_postgres = "postgresql" in database_url or "postgres" in database_url
     print(f"Migration: Starting (is_postgres={is_postgres})")
@@ -31,6 +38,17 @@ async def run_migrations():
     try:
         async with async_session_maker() as session:
             if is_postgres:
+                # Quick check: if trigram index exists, all migrations have run
+                try:
+                    result = await session.execute(text(
+                        "SELECT 1 FROM pg_indexes WHERE indexname = 'ix_auction_items_title_trgm'"
+                    ))
+                    if result.scalar() is not None:
+                        print("Migration: All migrations already applied, skipping")
+                        return
+                except Exception as e:
+                    print(f"Migration: Quick check failed: {e}, continuing with full check")
+
                 # Check which indexes already exist to avoid unnecessary work
                 try:
                     result = await session.execute(text(
@@ -40,7 +58,7 @@ async def run_migrations():
                     print(f"Migration: Existing indexes: {existing_indexes}")
                 except Exception as e:
                     print(f"Migration: Could not check existing indexes: {e}")
-                    existing_indexes = set()
+                    return  # Can't proceed without knowing current state
 
                 # For PostgreSQL, just try to add the column - it will fail if exists
                 try:
@@ -197,14 +215,17 @@ async def get_context(request: Request):
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup - with error handling to allow app to start even if DB is temporarily unavailable
+    db_available = True
     try:
         await init_db()
     except Exception as e:
         print(f"WARNING: Database initialization error (non-fatal): {e}")
+        db_available = False
 
     # Run pending migrations (adds trigram indexes for fast search)
+    # Skip if DB not available to avoid wasting time on timeouts
     try:
-        await run_migrations()
+        await run_migrations(db_available=db_available)
     except Exception as e:
         print(f"WARNING: Migration error (non-fatal): {e}")
 
