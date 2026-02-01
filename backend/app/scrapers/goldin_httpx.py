@@ -306,7 +306,8 @@ class GoldinHTTPScraper(BaseScraper):
                 return (slug, {})
 
         # Fetch all cert_numbers concurrently with a semaphore to limit concurrent requests
-        semaphore = asyncio.Semaphore(50)  # Max 50 concurrent requests
+        # Keep low to avoid exhausting Supabase connection pool
+        semaphore = asyncio.Semaphore(10)  # Max 10 concurrent requests
 
         async def fetch_with_semaphore(slug: str):
             async with semaphore:

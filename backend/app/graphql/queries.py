@@ -23,11 +23,25 @@ from app.services.market_value import MarketValueEstimator
 from app.services.price_snapshot_service import PriceSnapshotService
 
 
-async def get_db_session() -> AsyncSession:
-    """Get database session from dependency injection"""
+async def get_db_session(max_retries: int = 3) -> AsyncSession:
+    """Get database session from dependency injection with retry logic"""
+    import asyncio
     from app.database import get_db
-    async for session in get_db():
-        return session
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            async for session in get_db():
+                return session
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))  # Backoff
+            continue
+
+    # If all retries failed, raise the last error
+    if last_error:
+        raise last_error
 
 
 async def get_user_watched_item_ids(db: AsyncSession, user_id: int) -> Set[int]:
