@@ -170,16 +170,25 @@ async def run_migrations():
 
 
 async def get_context(request: Request):
-    """Build GraphQL context with optional authenticated user"""
+    """Build GraphQL context with optional authenticated user.
+
+    If database connection fails, proceed as unauthenticated rather than
+    failing the entire request. This makes the API more resilient during
+    high load or connection pool exhaustion.
+    """
     user = None
     auth_header = request.headers.get("Authorization")
 
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        async for db in get_db():
-            auth_service = AuthService(db)
-            user = await auth_service.get_current_user(token)
-            break
+        try:
+            async for db in get_db():
+                auth_service = AuthService(db)
+                user = await auth_service.get_current_user(token)
+                break
+        except Exception as e:
+            # Log but don't fail - proceed as unauthenticated
+            print(f"Auth context error (proceeding as unauthenticated): {e}")
 
     return {"request": request, "user": user}
 

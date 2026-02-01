@@ -140,16 +140,21 @@ class BaseScraper(ABC):
             message=f"{self.auction_house_name} scraper base health check passed"
         )
 
-    async def save_to_database(self, items: List[Dict]):
+    async def save_to_database(self, items: List[Dict], batch_size: int = 50):
         """
-        Save scraped items to the database.
+        Save scraped items to the database in batches.
         Handles deduplication, updates, and item type classification.
+
+        Args:
+            items: List of item dictionaries to save
+            batch_size: Number of items to process before committing (default 50)
         """
         from app.models import AuctionItem
         from sqlalchemy import select
         from datetime import datetime
         from app.utils.item_type_detection import detect_item_type_from_dict
 
+        processed = 0
         for item_data in items:
             # Auto-classify item type if not already set
             if not item_data.get("item_type"):
@@ -179,4 +184,13 @@ class BaseScraper(ABC):
                 )
                 self.db.add(new_item)
 
+            processed += 1
+
+            # Commit in batches to release connections and let other requests through
+            if processed % batch_size == 0:
+                await self.db.commit()
+                # Small delay to let other requests get connections
+                await asyncio.sleep(0.1)
+
+        # Commit any remaining items
         await self.db.commit()
