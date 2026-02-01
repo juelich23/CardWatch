@@ -215,9 +215,8 @@ async def get_context(request: Request):
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup - with error handling to allow app to start even if DB is temporarily unavailable
-    db_available = True
     try:
-        await init_db()
+        db_available = await init_db()
     except Exception as e:
         print(f"WARNING: Database initialization error (non-fatal): {e}")
         db_available = False

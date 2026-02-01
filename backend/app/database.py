@@ -84,12 +84,15 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     # Explicit close() causes IllegalStateChangeError with concurrent pgbouncer requests
 
 
-async def init_db(max_retries: int = 3, retry_delay: float = 2.0):
+async def init_db(max_retries: int = 3, retry_delay: float = 2.0) -> bool:
     """Initialize database tables with retry logic.
 
     Args:
         max_retries: Maximum number of connection attempts
         retry_delay: Delay between retries in seconds
+
+    Returns:
+        True if database initialized successfully, False otherwise
     """
     import asyncio
 
@@ -98,7 +101,7 @@ async def init_db(max_retries: int = 3, retry_delay: float = 2.0):
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             print(f"Database initialized successfully (attempt {attempt + 1})")
-            return
+            return True
         except Exception as e:
             if attempt < max_retries - 1:
                 print(f"Database connection attempt {attempt + 1} failed: {e}")
@@ -110,3 +113,6 @@ async def init_db(max_retries: int = 3, retry_delay: float = 2.0):
                 # Don't raise - let the app start anyway
                 # Individual requests will fail if DB is unavailable
                 print("WARNING: App starting without confirmed database connection")
+                return False
+
+    return False  # Should not reach here, but just in case
