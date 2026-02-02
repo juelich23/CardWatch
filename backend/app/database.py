@@ -71,8 +71,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
     Creates a new session per request. With NullPool, each session
     gets its own connection that's released when the session is done.
-    We don't explicitly close to avoid IllegalStateChangeError with
-    concurrent requests through pgbouncer.
     """
     session = async_session_maker()
     try:
@@ -80,8 +78,13 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     except Exception:
         await session.rollback()
         raise
-    # Note: With NullPool, connection is released when session is garbage collected
-    # Explicit close() causes IllegalStateChangeError with concurrent pgbouncer requests
+    finally:
+        # Always close the session to return connection to pool
+        # Wrap in try/except to handle edge cases with pgbouncer
+        try:
+            await session.close()
+        except Exception:
+            pass  # Connection may already be closed/invalid
 
 
 async def init_db(max_retries: int = 3, retry_delay: float = 2.0) -> bool:

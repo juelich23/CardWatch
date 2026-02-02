@@ -48,11 +48,11 @@ def with_scraper_lock(func: Callable) -> Callable:
         # Check circuit breaker
         if _circuit_breaker["is_open"]:
             if _circuit_breaker["cooldown_until"] and datetime.utcnow() < _circuit_breaker["cooldown_until"]:
-                logger.warning(f"Circuit breaker OPEN - skipping {func.__name__} until {_circuit_breaker['cooldown_until']}")
+                print(f"[SCRAPER] Circuit breaker OPEN - skipping {func.__name__}", flush=True)
                 return {"skipped": True, "reason": "circuit_breaker_open"}
             else:
                 # Cooldown expired, reset circuit breaker
-                logger.info("Circuit breaker cooldown expired - resetting")
+                print("[SCRAPER] Circuit breaker cooldown expired - resetting", flush=True)
                 _circuit_breaker = {
                     "failures": 0,
                     "last_failure": None,
@@ -61,17 +61,19 @@ def with_scraper_lock(func: Callable) -> Callable:
                 }
 
         # Try to acquire lock with timeout
+        lock_acquired = False
         try:
-            acquired = await asyncio.wait_for(
+            await asyncio.wait_for(
                 _scraper_lock.acquire(),
                 timeout=10.0  # Don't wait more than 10 seconds
             )
+            lock_acquired = True
         except asyncio.TimeoutError:
-            logger.warning(f"Could not acquire scraper lock for {func.__name__} - another scraper is running")
+            print(f"[SCRAPER] Could not acquire lock for {func.__name__} - another scraper is running", flush=True)
             return {"skipped": True, "reason": "lock_timeout"}
 
         try:
-            logger.info(f"Acquired scraper lock for {func.__name__}")
+            print(f"[SCRAPER] Acquired lock for {func.__name__}", flush=True)
             result = await func(*args, **kwargs)
 
             # Success - reset failure count
@@ -85,18 +87,19 @@ def with_scraper_lock(func: Callable) -> Callable:
                 _circuit_breaker["failures"] += 1
                 _circuit_breaker["last_failure"] = datetime.utcnow()
 
-                logger.error(f"DB error in {func.__name__}: {e} (failure #{_circuit_breaker['failures']})")
+                print(f"[SCRAPER] DB error in {func.__name__}: {e} (failure #{_circuit_breaker['failures']})", flush=True)
 
                 if _circuit_breaker["failures"] >= FAILURE_THRESHOLD:
                     _circuit_breaker["is_open"] = True
                     _circuit_breaker["cooldown_until"] = datetime.utcnow() + timedelta(seconds=COOLDOWN_SECONDS)
-                    logger.error(f"Circuit breaker OPENED - pausing all scrapers until {_circuit_breaker['cooldown_until']}")
+                    print(f"[SCRAPER] Circuit breaker OPENED - pausing all scrapers for {COOLDOWN_SECONDS}s", flush=True)
 
             raise
 
         finally:
-            _scraper_lock.release()
-            logger.info(f"Released scraper lock for {func.__name__}")
+            if lock_acquired:
+                _scraper_lock.release()
+                print(f"[SCRAPER] Released lock for {func.__name__}", flush=True)
 
     return wrapper
 
