@@ -372,6 +372,43 @@ async def cleanup_ended_auctions(days_old: int = 7):
             raise
 
 
+@with_scraper_lock
+async def scrape_alt(max_items: int = 10000):
+    """
+    Scrape Alt.xyz liquid auctions.
+
+    Requires ALT_TYPESENSE_KEY environment variable to be set.
+    Get the key from browser DevTools when loading app.alt.xyz/liquid-auctions.
+    """
+    import os
+    from app.scrapers.alt import AltScraper
+
+    api_key = os.getenv("ALT_TYPESENSE_KEY")
+    if not api_key:
+        logger.warning("ALT_TYPESENSE_KEY not set - skipping Alt.xyz scrape")
+        return {"skipped": True, "reason": "no_api_key"}
+
+    logger.info(f"Starting Alt.xyz scrape (max_items={max_items})")
+    start_time = datetime.utcnow()
+
+    async_session = get_db_session()
+    async with async_session() as db:
+        try:
+            scraper = AltScraper()
+            items = await scraper.scrape(db, api_key=api_key, max_items=max_items)
+
+            duration = (datetime.utcnow() - start_time).total_seconds()
+            logger.info(f"Alt.xyz scrape complete: {len(items)} items in {duration:.1f}s")
+
+            return {
+                "items_scraped": len(items),
+                "duration_seconds": duration,
+            }
+        except Exception as e:
+            logger.error(f"Alt.xyz scrape failed: {e}")
+            raise
+
+
 # Job registry for easy access
 SCRAPER_JOBS = {
     "cardhobby": {
@@ -388,6 +425,11 @@ SCRAPER_JOBS = {
         "func": scrape_fanatics,
         "default_interval": 60,  # every hour
         "description": "Scrape Fanatics auctions",
+    },
+    "alt": {
+        "func": scrape_alt,
+        "default_interval": 60,  # every hour
+        "description": "Scrape Alt.xyz liquid auctions",
     },
     "heritage": {
         "func": scrape_heritage,
