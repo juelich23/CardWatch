@@ -24,15 +24,22 @@ from app.services.price_snapshot_service import PriceSnapshotService
 
 
 async def get_db_session(max_retries: int = 3) -> AsyncSession:
-    """Get database session from dependency injection with retry logic"""
+    """Get database session with retry logic.
+
+    IMPORTANT: Caller is responsible for closing the session when done.
+    Use try/finally or ensure session.close() is called.
+    """
     import asyncio
-    from app.database import get_db
+    from app.database import async_session_maker
 
     last_error = None
     for attempt in range(max_retries):
         try:
-            async for session in get_db():
-                return session
+            # Create session directly - caller must close it
+            session = async_session_maker()
+            # Test connection is working
+            await session.execute(text("SELECT 1"))
+            return session
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
@@ -42,6 +49,7 @@ async def get_db_session(max_retries: int = 3) -> AsyncSession:
     # If all retries failed, raise the last error
     if last_error:
         raise last_error
+    raise RuntimeError("Failed to get database session")
 
 
 async def get_user_watched_item_ids(db: AsyncSession, user_id: int) -> Set[int]:
@@ -88,119 +96,123 @@ class Query:
             item_type: Filter by item type (CARD, MEMORABILIA, AUTOGRAPH, SEALED, OTHER)
         """
         db = await get_db_session()
+        try:
+            # Cap page_size at 100 to prevent abuse
+            page_size = min(page_size, 100)
 
-        # Cap page_size at 100 to prevent abuse
-        page_size = min(page_size, 100)
+            # Get current user from context (may be None)
+            user = info.context.get("user") if info.context else None
 
-        # Get current user from context (may be None)
-        user = info.context.get("user") if info.context else None
+            # Build query
+            query = select(AuctionItemModel)
 
-        # Build query
-        query = select(AuctionItemModel)
+            # Apply filters
+            filters = []
+            if status:
+                filters.append(AuctionItemModel.status == status)
+                # Also filter out items where end_time has passed (actually ended)
+                if status == "Live":
+                    filters.append(AuctionItemModel.end_time > datetime.utcnow())
+            if auction_house:
+                filters.append(AuctionItemModel.auction_house == auction_house)
+            if category:
+                filters.append(AuctionItemModel.category == category)
+            if grading_company:
+                filters.append(AuctionItemModel.grading_company == grading_company)
+            if sport:
+                filters.append(AuctionItemModel.sport == sport)
+            if min_bid is not None:
+                filters.append(AuctionItemModel.current_bid >= min_bid)
+            if max_bid is not None:
+                filters.append(AuctionItemModel.current_bid <= max_bid)
+            if item_type:
+                filters.append(AuctionItemModel.item_type == item_type)
 
-        # Apply filters
-        filters = []
-        if status:
-            filters.append(AuctionItemModel.status == status)
-            # Also filter out items where end_time has passed (actually ended)
-            if status == "Live":
-                filters.append(AuctionItemModel.end_time > datetime.utcnow())
-        if auction_house:
-            filters.append(AuctionItemModel.auction_house == auction_house)
-        if category:
-            filters.append(AuctionItemModel.category == category)
-        if grading_company:
-            filters.append(AuctionItemModel.grading_company == grading_company)
-        if sport:
-            filters.append(AuctionItemModel.sport == sport)
-        if min_bid is not None:
-            filters.append(AuctionItemModel.current_bid >= min_bid)
-        if max_bid is not None:
-            filters.append(AuctionItemModel.current_bid <= max_bid)
-        if item_type:
-            filters.append(AuctionItemModel.item_type == item_type)
+            # Search using ILIKE on title only (faster, more relevant)
+            # Note: Requires pg_trgm extension and GIN index for fast ILIKE searches
+            if search:
+                search_term = f"%{search}%"
+                filters.append(AuctionItemModel.title.ilike(search_term))
 
-        # Search using ILIKE on title only (faster, more relevant)
-        # Note: Requires pg_trgm extension and GIN index for fast ILIKE searches
-        if search:
-            search_term = f"%{search}%"
-            filters.append(AuctionItemModel.title.ilike(search_term))
-
-        if filters:
-            query = query.where(*filters)
-
-        # Apply sorting based on sort_by parameter
-        if sort_by == "price_low":
-            query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
-        elif sort_by == "price_high":
-            query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
-        elif sort_by == "bid_count":
-            query = query.order_by(AuctionItemModel.bid_count.desc())
-        elif sort_by == "recent":
-            query = query.order_by(AuctionItemModel.created_at.desc())
-        else:  # default: end_time
-            query = query.order_by(AuctionItemModel.end_time.asc())
-
-        # Apply pagination
-        offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size + 1)  # Fetch one extra to check hasMore
-
-        # Execute query
-        result = await db.execute(query)
-        items = list(result.scalars().all())
-
-        # Determine if there are more items
-        has_more = len(items) > page_size
-        if has_more:
-            items = items[:page_size]  # Remove the extra item
-
-        # Optimize count: skip expensive COUNT(*) in certain cases
-        if len(items) < page_size:
-            # We're on the last page, calculate total from offset + items
-            total = offset + len(items)
-        elif search:
-            # For search queries, skip expensive COUNT and estimate
-            # This avoids slow ILIKE count on 60k+ rows
-            total = offset + len(items) + (page_size if has_more else 0)
-        else:
-            # Need to run count query (fast for non-search filters with indexes)
-            count_query = select(func.count()).select_from(AuctionItemModel)
             if filters:
-                count_query = count_query.where(*filters)
-            result = await db.execute(count_query)
-            total = result.scalar() or 0
+                query = query.where(*filters)
 
-        # Get user's watched item IDs for per-user is_watched
-        watched_ids: Set[int] = set()
-        if user:
-            watched_ids = await get_user_watched_item_ids(db, user.id)
+            # Apply sorting based on sort_by parameter
+            if sort_by == "price_low":
+                query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
+            elif sort_by == "price_high":
+                query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
+            elif sort_by == "bid_count":
+                query = query.order_by(AuctionItemModel.bid_count.desc())
+            elif sort_by == "recent":
+                query = query.order_by(AuctionItemModel.created_at.desc())
+            else:  # default: end_time
+                query = query.order_by(AuctionItemModel.end_time.asc())
 
-        # Convert to GraphQL types with per-user is_watched
-        graphql_items = [
-            auction_item_from_model(item, is_watched=(item.id in watched_ids))
-            for item in items
-        ]
+            # Apply pagination
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size + 1)  # Fetch one extra to check hasMore
 
-        return PaginatedAuctionItems(
-            items=graphql_items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            has_more=has_more,
-        )
+            # Execute query
+            result = await db.execute(query)
+            items = list(result.scalars().all())
+
+            # Determine if there are more items
+            has_more = len(items) > page_size
+            if has_more:
+                items = items[:page_size]  # Remove the extra item
+
+            # Optimize count: skip expensive COUNT(*) in certain cases
+            if len(items) < page_size:
+                # We're on the last page, calculate total from offset + items
+                total = offset + len(items)
+            elif search:
+                # For search queries, skip expensive COUNT and estimate
+                # This avoids slow ILIKE count on 60k+ rows
+                total = offset + len(items) + (page_size if has_more else 0)
+            else:
+                # Need to run count query (fast for non-search filters with indexes)
+                count_query = select(func.count()).select_from(AuctionItemModel)
+                if filters:
+                    count_query = count_query.where(*filters)
+                result = await db.execute(count_query)
+                total = result.scalar() or 0
+
+            # Get user's watched item IDs for per-user is_watched
+            watched_ids: Set[int] = set()
+            if user:
+                watched_ids = await get_user_watched_item_ids(db, user.id)
+
+            # Convert to GraphQL types with per-user is_watched
+            graphql_items = [
+                auction_item_from_model(item, is_watched=(item.id in watched_ids))
+                for item in items
+            ]
+
+            return PaginatedAuctionItems(
+                items=graphql_items,
+                total=total,
+                page=page,
+                page_size=page_size,
+                has_more=has_more,
+            )
+        finally:
+            await db.close()
 
     @strawberry.field
     async def auction_item(self, id: int) -> Optional[AuctionItemType]:
         """Get a single auction item by ID"""
         db = await get_db_session()
+        try:
+            query = select(AuctionItemModel).where(AuctionItemModel.id == id)
+            result = await db.execute(query)
+            item = result.scalar_one_or_none()
 
-        query = select(AuctionItemModel).where(AuctionItemModel.id == id)
-        result = await db.execute(query)
-        item = result.scalar_one_or_none()
-
-        if item:
-            return auction_item_from_model(item)
-        return None
+            if item:
+                return auction_item_from_model(item)
+            return None
+        finally:
+            await db.close()
 
     @strawberry.field
     async def auctions(
@@ -210,22 +222,24 @@ class Query:
     ) -> List[AuctionType]:
         """Get list of auctions"""
         db = await get_db_session()
+        try:
+            query = select(AuctionModel)
 
-        query = select(AuctionModel)
+            filters = []
+            if auction_house:
+                filters.append(AuctionModel.auction_house == auction_house)
+            if status:
+                filters.append(AuctionModel.status == status)
 
-        filters = []
-        if auction_house:
-            filters.append(AuctionModel.auction_house == auction_house)
-        if status:
-            filters.append(AuctionModel.status == status)
+            if filters:
+                query = query.where(*filters)
 
-        if filters:
-            query = query.where(*filters)
+            result = await db.execute(query)
+            auctions = result.scalars().all()
 
-        result = await db.execute(query)
-        auctions = result.scalars().all()
-
-        return [auction_from_model(auction) for auction in auctions]
+            return [auction_from_model(auction) for auction in auctions]
+        finally:
+            await db.close()
 
     @strawberry.field
     async def market_value_estimate(
@@ -239,87 +253,93 @@ class Query:
         from datetime import datetime
 
         db = await get_db_session()
-
-        # Fetch the item
-        query = select(AuctionItemModel).where(AuctionItemModel.id == item_id)
-        result = await db.execute(query)
-        item = result.scalar_one_or_none()
-
-        if not item:
-            return MarketValueEstimate(
-                confidence="low",
-                notes="Item not found",
-            )
-
-        # Check if we already have a cached market value estimate in the database
-        if item.market_value_avg is not None:
-            return MarketValueEstimate(
-                estimated_low=item.market_value_low,
-                estimated_high=item.market_value_high,
-                estimated_average=item.market_value_avg,
-                confidence=item.market_value_confidence or "medium",
-                notes=item.market_value_notes or "",
-            )
-
-        # No cached value - call LLM and save result
         try:
-            estimator = MarketValueEstimator()
-            estimate_dict = estimator.estimate_value(
-                title=item.title,
-                grading_company=item.grading_company,
-                grade=item.grade,
-                current_bid=item.current_bid,
-            )
+            # Fetch the item
+            query = select(AuctionItemModel).where(AuctionItemModel.id == item_id)
+            result = await db.execute(query)
+            item = result.scalar_one_or_none()
 
-            # Save to database for future requests
-            item.market_value_low = estimate_dict.get("estimated_low")
-            item.market_value_high = estimate_dict.get("estimated_high")
-            item.market_value_avg = estimate_dict.get("estimated_average")
-            item.market_value_confidence = estimate_dict.get("confidence", "low")
-            item.market_value_notes = estimate_dict.get("notes", "")
-            item.market_value_updated_at = datetime.utcnow()
-            await db.commit()
+            if not item:
+                return MarketValueEstimate(
+                    confidence="low",
+                    notes="Item not found",
+                )
 
-            return MarketValueEstimate(
-                estimated_low=estimate_dict.get("estimated_low"),
-                estimated_high=estimate_dict.get("estimated_high"),
-                estimated_average=estimate_dict.get("estimated_average"),
-                confidence=estimate_dict.get("confidence", "low"),
-                notes=estimate_dict.get("notes", ""),
-            )
-        except Exception as e:
-            return MarketValueEstimate(
-                confidence="low",
-                notes=f"Error estimating value: {str(e)}",
-            )
+            # Check if we already have a cached market value estimate in the database
+            if item.market_value_avg is not None:
+                return MarketValueEstimate(
+                    estimated_low=item.market_value_low,
+                    estimated_high=item.market_value_high,
+                    estimated_average=item.market_value_avg,
+                    confidence=item.market_value_confidence or "medium",
+                    notes=item.market_value_notes or "",
+                )
+
+            # No cached value - call LLM and save result
+            try:
+                estimator = MarketValueEstimator()
+                estimate_dict = estimator.estimate_value(
+                    title=item.title,
+                    grading_company=item.grading_company,
+                    grade=item.grade,
+                    current_bid=item.current_bid,
+                )
+
+                # Save to database for future requests
+                item.market_value_low = estimate_dict.get("estimated_low")
+                item.market_value_high = estimate_dict.get("estimated_high")
+                item.market_value_avg = estimate_dict.get("estimated_average")
+                item.market_value_confidence = estimate_dict.get("confidence", "low")
+                item.market_value_notes = estimate_dict.get("notes", "")
+                item.market_value_updated_at = datetime.utcnow()
+                await db.commit()
+
+                return MarketValueEstimate(
+                    estimated_low=estimate_dict.get("estimated_low"),
+                    estimated_high=estimate_dict.get("estimated_high"),
+                    estimated_average=estimate_dict.get("estimated_average"),
+                    confidence=estimate_dict.get("confidence", "low"),
+                    notes=estimate_dict.get("notes", ""),
+                )
+            except Exception as e:
+                return MarketValueEstimate(
+                    confidence="low",
+                    notes=f"Error estimating value: {str(e)}",
+                )
+        finally:
+            await db.close()
 
     @strawberry.field
     async def auction_houses(self) -> List[str]:
         """Get list of unique auction houses"""
         db = await get_db_session()
+        try:
+            query = select(AuctionItemModel.auction_house).distinct()
+            result = await db.execute(query)
+            houses = result.scalars().all()
 
-        query = select(AuctionItemModel.auction_house).distinct()
-        result = await db.execute(query)
-        houses = result.scalars().all()
-
-        return list(houses)
+            return list(houses)
+        finally:
+            await db.close()
 
     @strawberry.field
     async def categories(self, auction_house: Optional[str] = None) -> List[str]:
         """Get list of unique categories"""
         db = await get_db_session()
+        try:
+            query = select(AuctionItemModel.category).distinct().where(
+                AuctionItemModel.category.isnot(None)
+            )
 
-        query = select(AuctionItemModel.category).distinct().where(
-            AuctionItemModel.category.isnot(None)
-        )
+            if auction_house:
+                query = query.where(AuctionItemModel.auction_house == auction_house)
 
-        if auction_house:
-            query = query.where(AuctionItemModel.auction_house == auction_house)
+            result = await db.execute(query)
+            cats = result.scalars().all()
 
-        result = await db.execute(query)
-        cats = result.scalars().all()
-
-        return [c for c in cats if c]
+            return [c for c in cats if c]
+        finally:
+            await db.close()
 
     @strawberry.field
     async def watchlist(
@@ -352,73 +372,75 @@ class Query:
             )
 
         db = await get_db_session()
-
-        # Build query joining watchlist with auction items
-        query = (
-            select(AuctionItemModel)
-            .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
-            .where(UserWatchlistItem.user_id == user.id)
-        )
-
-        # Optionally filter out ended items
-        if not include_ended:
-            query = query.where(AuctionItemModel.end_time > datetime.utcnow())
-
-        # Apply sorting
-        if sort_by == "price_low":
-            query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
-        elif sort_by == "price_high":
-            query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
-        elif sort_by == "recently_added":
-            query = query.order_by(UserWatchlistItem.added_at.desc())
-        else:  # default: end_time
-            query = query.order_by(AuctionItemModel.end_time.asc())
-
-        # Apply pagination - fetch one extra to determine hasMore
-        offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size + 1)
-
-        # Execute query
-        result = await db.execute(query)
-        items = list(result.scalars().all())
-
-        # Determine if there are more items
-        has_more = len(items) > page_size
-        if has_more:
-            items = items[:page_size]
-
-        # For small result sets, calculate total from offset + items
-        # This avoids a separate COUNT query for typical watchlists
-        if len(items) < page_size:
-            total = offset + len(items)
-        else:
-            # Only run count query if we need it (results fill the page)
-            count_query = (
-                select(func.count())
-                .select_from(UserWatchlistItem)
+        try:
+            # Build query joining watchlist with auction items
+            query = (
+                select(AuctionItemModel)
+                .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
                 .where(UserWatchlistItem.user_id == user.id)
             )
+
+            # Optionally filter out ended items
             if not include_ended:
+                query = query.where(AuctionItemModel.end_time > datetime.utcnow())
+
+            # Apply sorting
+            if sort_by == "price_low":
+                query = query.order_by(AuctionItemModel.current_bid.asc().nullslast())
+            elif sort_by == "price_high":
+                query = query.order_by(AuctionItemModel.current_bid.desc().nullslast())
+            elif sort_by == "recently_added":
+                query = query.order_by(UserWatchlistItem.added_at.desc())
+            else:  # default: end_time
+                query = query.order_by(AuctionItemModel.end_time.asc())
+
+            # Apply pagination - fetch one extra to determine hasMore
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size + 1)
+
+            # Execute query
+            result = await db.execute(query)
+            items = list(result.scalars().all())
+
+            # Determine if there are more items
+            has_more = len(items) > page_size
+            if has_more:
+                items = items[:page_size]
+
+            # For small result sets, calculate total from offset + items
+            # This avoids a separate COUNT query for typical watchlists
+            if len(items) < page_size:
+                total = offset + len(items)
+            else:
+                # Only run count query if we need it (results fill the page)
                 count_query = (
                     select(func.count())
-                    .select_from(AuctionItemModel)
-                    .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
+                    .select_from(UserWatchlistItem)
                     .where(UserWatchlistItem.user_id == user.id)
-                    .where(AuctionItemModel.end_time > datetime.utcnow())
                 )
-            count_result = await db.execute(count_query)
-            total = count_result.scalar() or 0
+                if not include_ended:
+                    count_query = (
+                        select(func.count())
+                        .select_from(AuctionItemModel)
+                        .join(UserWatchlistItem, UserWatchlistItem.item_id == AuctionItemModel.id)
+                        .where(UserWatchlistItem.user_id == user.id)
+                        .where(AuctionItemModel.end_time > datetime.utcnow())
+                    )
+                count_result = await db.execute(count_query)
+                total = count_result.scalar() or 0
 
-        # Convert to GraphQL types - all items in watchlist are watched by this user
-        graphql_items = [auction_item_from_model(item, is_watched=True) for item in items]
+            # Convert to GraphQL types - all items in watchlist are watched by this user
+            graphql_items = [auction_item_from_model(item, is_watched=True) for item in items]
 
-        return PaginatedAuctionItems(
-            items=graphql_items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            has_more=has_more,
-        )
+            return PaginatedAuctionItems(
+                items=graphql_items,
+                total=total,
+                page=page,
+                page_size=page_size,
+                has_more=has_more,
+            )
+        finally:
+            await db.close()
 
     @strawberry.field
     async def price_history(
@@ -434,16 +456,19 @@ class Query:
             days: Number of days of history to fetch (default 30)
         """
         db = await get_db_session()
-        service = PriceSnapshotService(db)
+        try:
+            service = PriceSnapshotService(db)
 
-        snapshots = await service.get_price_history(item_id, days)
+            snapshots = await service.get_price_history(item_id, days)
 
-        return [
-            PriceSnapshotType(
-                snapshot_date=s.snapshot_date,
-                current_bid=s.current_bid,
-                bid_count=s.bid_count,
-                status=s.status
-            )
-            for s in snapshots
-        ]
+            return [
+                PriceSnapshotType(
+                    snapshot_date=s.snapshot_date,
+                    current_bid=s.current_bid,
+                    bid_count=s.bid_count,
+                    status=s.status
+                )
+                for s in snapshots
+            ]
+        finally:
+            await db.close()

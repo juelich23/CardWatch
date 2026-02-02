@@ -3,19 +3,25 @@ GraphQL Mutations
 Define all write operations for the API
 """
 import strawberry
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types import Info
 
 from app.models import AuctionItem as AuctionItemModel, UserWatchlistItem
 from app.graphql.types import GenericResponse
+from app.database import async_session_maker
 
 
 async def get_db_session() -> AsyncSession:
-    """Get database session from dependency injection"""
-    from app.database import get_db
-    async for session in get_db():
-        return session
+    """Get database session.
+
+    IMPORTANT: Caller is responsible for closing the session when done.
+    Use try/finally or ensure session.close() is called.
+    """
+    session = async_session_maker()
+    # Test connection is working
+    await session.execute(text("SELECT 1"))
+    return session
 
 
 @strawberry.type
@@ -90,3 +96,5 @@ class Mutation:
                 success=False,
                 message=f"Error toggling watch: {str(e)}",
             )
+        finally:
+            await db.close()
