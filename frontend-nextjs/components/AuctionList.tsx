@@ -91,8 +91,10 @@ export function AuctionList() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
-  // Ref to track loading state for observer callback
+  // Refs to track state for observer callback (avoid stale closures)
   const isLoadingRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const currentPageRef = useRef(1);
 
   useEffect(() => {
     setMounted(true);
@@ -132,6 +134,9 @@ export function AuctionList() {
     setCurrentPage(1);
     setHasMore(true);
     setDisplayedItems([]);
+    // Also update refs immediately
+    currentPageRef.current = 1;
+    hasMoreRef.current = true;
   }, [searchInput, auctionHouse, sortBy, minPrice, maxPrice, itemType, sport]);
 
   // Process initial data (page 1)
@@ -144,17 +149,20 @@ export function AuctionList() {
       }
       setDisplayedItems(items);
       setHasMore(data.auctionItems.hasMore);
+      // Also update ref
+      hasMoreRef.current = data.auctionItems.hasMore;
     }
   }, [data, sortBy, currentPage]);
 
-  // Load more items function
+  // Load more items function - uses refs to avoid stale closure issues
   const loadMoreItems = useCallback(async () => {
-    if (isLoadingRef.current || !hasMore) return;
+    // Use refs to check current state (avoids stale closures in observer)
+    if (isLoadingRef.current || !hasMoreRef.current) return;
 
     isLoadingRef.current = true;
     setIsLoadingMore(true);
 
-    const nextPage = currentPage + 1;
+    const nextPage = currentPageRef.current + 1;
 
     try {
       const result = await fetchMore({
@@ -163,7 +171,7 @@ export function AuctionList() {
 
       if (result.data?.auctionItems?.items) {
         const newItems = [...result.data.auctionItems.items];
-        // Server handles item_type filtering now
+        const newHasMore = result.data.auctionItems.hasMore;
 
         setDisplayedItems(prev => {
           const existingIds = new Set(prev.map(item => item.id));
@@ -175,8 +183,11 @@ export function AuctionList() {
           return [...prev, ...uniqueNewItems];
         });
 
+        // Update both state and refs
         setCurrentPage(nextPage);
-        setHasMore(result.data.auctionItems.hasMore);
+        currentPageRef.current = nextPage;
+        setHasMore(newHasMore);
+        hasMoreRef.current = newHasMore;
       }
     } catch (err) {
       console.error('Error loading more items:', err);
@@ -184,7 +195,7 @@ export function AuctionList() {
       isLoadingRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [fetchMore, queryVariables, sortBy, hasMore, currentPage]);
+  }, [fetchMore, queryVariables, sortBy]);
 
   // Ref for sentinel element
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -194,11 +205,12 @@ export function AuctionList() {
   useEffect(() => {
     const sentinel = sentinelRef.current;
     // Only block if we have no items yet (initial load) or no more items to fetch
-    if (!sentinel || !hasMore || displayedItems.length === 0) return;
+    if (!sentinel || !hasMoreRef.current || displayedItems.length === 0) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isLoadingRef.current) {
+        // Use ref to check loading state (avoids stale closure)
+        if (entries[0].isIntersecting && !isLoadingRef.current && hasMoreRef.current) {
           loadMoreItems();
         }
       },
@@ -208,7 +220,7 @@ export function AuctionList() {
     observer.observe(sentinel);
 
     return () => observer.disconnect();
-  }, [hasMore, displayedItems.length, loadMoreItems]);
+  }, [displayedItems.length, loadMoreItems]);
 
   const totalItems = data?.auctionItems?.total || 0;
 
@@ -398,12 +410,21 @@ export function AuctionList() {
           </div>
 
           {/* Infinite Scroll Sentinel */}
-          <div ref={sentinelRef} className="flex justify-center py-8">
+          <div ref={sentinelRef} className="flex flex-col items-center gap-4 py-8">
             {isLoadingMore && (
               <div className="flex items-center gap-2 text-text-2">
                 <LoadingSpinner />
                 <span>Loading more items...</span>
               </div>
+            )}
+            {!isLoadingMore && hasMore && displayedItems.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={loadMoreItems}
+                className="px-6"
+              >
+                Load More Items
+              </Button>
             )}
             {!hasMore && displayedItems.length > 0 && (
               <p className="text-muted text-sm">
