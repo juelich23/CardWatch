@@ -152,7 +152,7 @@ class AltScraper:
 
         # Build item URL
         listing_id = doc.get("listingId") or doc.get("id")
-        item_url = f"{self.base_url}/auctions/{listing_id}" if listing_id else None
+        item_url = f"{self.base_url}/liquid-auctions/select-listing?ids={listing_id}" if listing_id else None
 
         # Map category to sport
         category = doc.get("category")

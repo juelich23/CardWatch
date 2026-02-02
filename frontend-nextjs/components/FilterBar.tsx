@@ -23,6 +23,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 
 const auctionHouses = [
+  { value: 'alt', label: 'Alt' },
   { value: 'goldin', label: 'Goldin' },
   { value: 'fanatics', label: 'Fanatics Collect' },
   { value: 'heritage', label: 'Heritage Auctions' },
@@ -46,6 +47,7 @@ const sports = [
   { value: 'GOLF', label: 'Golf' },
   { value: 'BOXING', label: 'Boxing' },
   { value: 'RACING', label: 'Racing' },
+  { value: 'TCG', label: 'TCG (Pokemon, MTG, etc.)' },
   { value: 'OTHER', label: 'Other' },
 ];
 
