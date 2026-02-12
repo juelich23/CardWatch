@@ -237,21 +237,31 @@ class HeritageScraper:
         return items[:max_items]
 
     async def scrape_with_playwright(self, max_items: int = 500) -> List[Dict]:
-        """Scrape Heritage using Playwright with Firefox"""
+        """Scrape Heritage using Playwright with Firefox in headless mode"""
         from playwright.async_api import async_playwright
 
         items = []
         seen_ids = set()
 
         async with async_playwright() as p:
-            # Launch Firefox (non-headless to bypass bot detection)
-            # Note: Don't use proxy for Heritage - ScraperAPI requires ultra_premium
-            # and the local browser approach works well
-            browser = await p.firefox.launch(headless=False)
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
-                viewport={'width': 1920, 'height': 1080},
+            # Launch Firefox in headless mode for server compatibility
+            # Use stealth techniques to avoid bot detection
+            browser = await p.firefox.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
             )
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0',
+                viewport={'width': 1920, 'height': 1080},
+                locale='en-US',
+                timezone_id='America/New_York',
+            )
+            # Add stealth scripts to avoid detection
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            """)
             page = await context.new_page()
 
             try:
@@ -451,13 +461,149 @@ class HeritageScraper:
 
         return items[:max_items]
 
+    async def scrape_with_http(self, max_items: int = 500) -> List[Dict]:
+        """Scrape Heritage using direct HTTP requests with BeautifulSoup"""
+        import httpx
+        from bs4 import BeautifulSoup
+
+        items = []
+        seen_ids = set()
+        pages_scraped = 0
+        items_per_page = 48
+        max_pages = max(1, (max_items // items_per_page) + 1)
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            # First visit main page to get cookies
+            try:
+                await client.get(self.main_url, headers=headers)
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"   Warning: Could not load main page: {e}")
+
+            while len(items) < max_items and pages_scraped < max_pages:
+                page_num = pages_scraped + 1
+                # Heritage search URL for live sports card auctions
+                search_url = f'{self.base_url}/c/search/results.zx?si=2&dept=3923&live_state=5318&item_type_sports=3927&mode=live&page={items_per_page}~{page_num}'
+
+                print(f"   Fetching page {page_num} via HTTP...")
+
+                try:
+                    response = await client.get(search_url, headers=headers)
+                    if response.status_code != 200:
+                        print(f"   Error: HTTP {response.status_code}")
+                        break
+
+                    html = response.text
+                    soup = BeautifulSoup(html, 'html.parser')
+
+                    # Find auction item links
+                    page_items = []
+                    for link in soup.find_all('a', href=re.compile(r'/a/\d+-\d+')):
+                        href = link.get('href', '')
+                        if not href or 'auction-home' in href or 'SampleItem' in href:
+                            continue
+
+                        url_match = re.search(r'/a/(\d+)-(\d+)', href)
+                        if not url_match:
+                            continue
+
+                        auction_id = url_match.group(1)
+                        lot_number = url_match.group(2)
+                        item_id = f"{auction_id}-{lot_number}"
+
+                        if item_id in seen_ids:
+                            continue
+                        seen_ids.add(item_id)
+
+                        # Find container and extract data
+                        container = link.find_parent(['div', 'article'])
+                        if not container:
+                            continue
+
+                        text = container.get_text(' ', strip=True)
+
+                        # Get title
+                        title = link.get_text(strip=True)
+                        if not title or len(title) < 20:
+                            title_elem = container.find(['h3', 'h4', 'span'], class_=re.compile(r'title|name', re.I))
+                            if title_elem:
+                                title = title_elem.get_text(strip=True)
+                        if not title or len(title) < 20:
+                            continue
+
+                        # Extract bid
+                        bid_match = re.search(r'\$([0-9,]+)', text)
+                        current_bid = float(bid_match.group(1).replace(',', '')) if bid_match else None
+
+                        # Get image
+                        img = container.find('img', src=re.compile(r'heritagestatic'))
+                        img_src = None
+                        if img:
+                            img_src = img.get('src') or img.get('data-src')
+                            if img_src:
+                                img_src = re.sub(r'w=\d+', 'w=400', img_src)
+
+                        full_url = href if href.startswith('http') else f"{self.base_url}{href}"
+
+                        page_items.append({
+                            'title': title[:400],
+                            'href': full_url,
+                            'auctionId': auction_id,
+                            'lotNumber': lot_number,
+                            'currentBid': current_bid,
+                            'estimate': None,
+                            'imgSrc': img_src,
+                            'endTime': None
+                        })
+
+                    items.extend(page_items)
+                    pages_scraped += 1
+                    print(f"   Page {pages_scraped}: Found {len(page_items)} items (total: {len(items)})")
+
+                    if len(page_items) == 0:
+                        print("   No more items found")
+                        break
+
+                    await asyncio.sleep(1)  # Rate limiting
+
+                except Exception as e:
+                    print(f"   Error fetching page: {e}")
+                    break
+
+        return items[:max_items]
+
     async def scrape(self, db: AsyncSession, max_items: int = 2500, max_pages: int = 60) -> list:
         """Main scraping function"""
         print("🔍 Fetching items from Heritage Auctions...")
 
-        # Use Playwright - it works reliably with the live auctions URL
-        # ScraperAPI requires ultra_premium for Heritage which is paid
-        raw_items = await self.scrape_with_playwright(max_items)
+        raw_items = []
+
+        # Try ScraperAPI first if configured
+        if self.scraperapi_key:
+            print("   Trying ScraperAPI...")
+            raw_items = await self.scrape_with_scraperapi(max_items)
+
+        # Fall back to HTTP scraping
+        if not raw_items:
+            print("   Trying HTTP scraping...")
+            raw_items = await self.scrape_with_http(max_items)
+
+        # Last resort: try Playwright if available
+        if not raw_items:
+            try:
+                print("   Trying Playwright...")
+                raw_items = await self.scrape_with_playwright(max_items)
+            except Exception as e:
+                print(f"   Playwright failed: {e}")
 
         print(f"✅ Scraped {len(raw_items)} items from Heritage")
 
@@ -585,36 +731,28 @@ class HeritageScraper:
         return normalized_items
 
     async def health_check(self) -> HealthCheckResult:
-        """Check if Heritage Auctions is reachable via Playwright"""
+        """Check if Heritage Auctions is reachable via HTTP"""
+        import httpx
         try:
-            from playwright.async_api import async_playwright
-
-            async with async_playwright() as p:
-                browser = await p.firefox.launch(headless=False)
-                context = await browser.new_context(
-                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    self.base_url,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0'
+                    },
+                    follow_redirects=True,
                 )
-                page = await context.new_page()
-
-                try:
-                    await page.goto(self.main_url, wait_until='domcontentloaded', timeout=15000)
-                    await page.goto(self.base_url, wait_until='domcontentloaded', timeout=15000)
-                    title = await page.title()
-
-                    if 'Heritage' in title or 'Sports' in title:
-                        return HealthCheckResult(
-                            healthy=True,
-                            message="Heritage Auctions is reachable via Playwright",
-                            details={"title": title}
-                        )
+                if response.status_code == 200 and ('Heritage' in response.text or 'Sports' in response.text):
                     return HealthCheckResult(
-                        healthy=False,
-                        message="Heritage page loaded but title unexpected",
-                        details={"title": title}
+                        healthy=True,
+                        message="Heritage Auctions is reachable",
+                        details={"status_code": response.status_code}
                     )
-                finally:
-                    await browser.close()
-
+                return HealthCheckResult(
+                    healthy=False,
+                    message=f"Heritage returned status {response.status_code}",
+                    details={"status_code": response.status_code}
+                )
         except Exception as e:
             return HealthCheckResult(
                 healthy=False,

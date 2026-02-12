@@ -130,8 +130,9 @@ class FanaticsScraper:
             "x-algolia-application-id": self.algolia_app_id
         }
 
-        # Build filter string - fetch both WEEKLY and PREMIER marketplaces
-        base_filter = '(marketplace:"WEEKLY" OR marketplace:"PREMIER") AND (status:"Live")'
+        # Note: The API key has embedded marketplace filters, so we only add status filter
+        # The embedded filters already include: marketplace:WEEKLY OR marketplace:PREMIER OR marketplace:FIXED
+        base_filter = 'status:"Live"'
         if extra_filter:
             filters = f'{base_filter} AND {extra_filter}'
         else:
