@@ -255,7 +255,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CardWatch API",
     description="Auction aggregator for sports cards and collectibles",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
