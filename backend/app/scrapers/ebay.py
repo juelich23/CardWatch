@@ -213,6 +213,31 @@ class EbayScraper:
     def __init__(self):
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
+        self._pw = None
+        # Load proxy settings
+        from app.config import get_settings
+        settings = get_settings()
+        self._scraperapi_key = settings.scraperapi_key
+        self._proxy_url = settings.proxy_url
+
+    def _get_proxy_config(self) -> Optional[dict]:
+        """Get proxy configuration for Playwright."""
+        if self._scraperapi_key:
+            return {
+                "server": "http://proxy-server.scraperapi.com:8001",
+                "username": "scraperapi",
+                "password": self._scraperapi_key,
+            }
+        elif self._proxy_url:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self._proxy_url)
+            config = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+            if parsed.username:
+                config["username"] = parsed.username
+            if parsed.password:
+                config["password"] = parsed.password
+            return config
+        return None
 
     def _build_search_url(
         self, query: str, category: str = None, page: int = 1, items_per_page: int = 240,
@@ -235,16 +260,25 @@ class EbayScraper:
         if self._browser is not None:
             return
 
-        pw = await async_playwright().start()
-        self._browser = await pw.chromium.launch(headless=True)
+        self._pw = await async_playwright().start()
+        proxy = self._get_proxy_config()
+        launch_kwargs = {"headless": True}
+        if proxy:
+            launch_kwargs["proxy"] = proxy
+            logger.info("eBay scraper using proxy")
+
+        self._browser = await self._pw.chromium.launch(**launch_kwargs)
         self._context = await self._browser.new_context(
             user_agent=USER_AGENT,
             viewport={"width": 1920, "height": 1080},
         )
         # Visit homepage first to get cookies and bypass challenge
         page = await self._context.new_page()
-        await page.goto("https://www.ebay.com", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(2)
+        try:
+            await page.goto("https://www.ebay.com", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2)
+        except Exception as e:
+            logger.warning(f"eBay homepage visit failed: {e}")
         await page.close()
 
     async def _close_browser(self):
@@ -252,6 +286,9 @@ class EbayScraper:
             await self._browser.close()
             self._browser = None
             self._context = None
+        if self._pw:
+            await self._pw.stop()
+            self._pw = None
 
     async def _fetch_search_page(self, url: str) -> List[Dict]:
         """Fetch a search results page and extract item data via in-browser JS."""

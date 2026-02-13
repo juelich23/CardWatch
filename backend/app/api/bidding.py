@@ -656,3 +656,118 @@ async def trigger_submit_pending(
     """Manually trigger submission of pending snipes."""
     background_tasks.add_task(submit_pending_snipes)
     return {"message": "Pending snipe submission triggered"}
+
+
+# ─── eBay Item Upload (for local scraper) ────────────────────────────────────
+
+class EbayItemUpload(BaseModel):
+    external_id: str
+    title: str
+    description: str = ""
+    category: str | None = None
+    sport: str | None = None
+    grading_company: str | None = None
+    grade: str | None = None
+    cert_number: str | None = None
+    sub_category: str | None = None
+    image_url: str | None = None
+    current_bid: float | None = None
+    starting_bid: float | None = None
+    bid_count: int = 0
+    end_time: str | None = None
+    status: str = "Live"
+    item_url: str | None = None
+    lot_number: str | None = None
+    item_type: str | None = None
+
+
+@router.post("/upload-ebay-items")
+async def upload_ebay_items(
+    items: List[EbayItemUpload],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept scraped eBay items from a local scraper and save to DB."""
+    from app.models import Auction
+
+    # Get or create the ebay auction record
+    result = await db.execute(
+        select(Auction).where(
+            Auction.auction_house == "ebay",
+            Auction.external_id == "ebay-auctions",
+        )
+    )
+    auction = result.scalar_one_or_none()
+    if not auction:
+        auction = Auction(
+            auction_house="ebay",
+            external_id="ebay-auctions",
+            title="eBay Auctions",
+            status="active",
+        )
+        db.add(auction)
+        await db.flush()
+
+    saved = 0
+    updated = 0
+    for item_data in items:
+        # Parse end_time string to datetime
+        end_time = None
+        if item_data.end_time:
+            try:
+                end_time = datetime.fromisoformat(item_data.end_time.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                pass
+
+        result = await db.execute(
+            select(AuctionItem).where(
+                AuctionItem.auction_house == "ebay",
+                AuctionItem.external_id == item_data.external_id,
+            )
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.title = item_data.title[:500]
+            existing.current_bid = item_data.current_bid
+            existing.bid_count = item_data.bid_count
+            existing.end_time = end_time
+            existing.status = item_data.status
+            existing.image_url = item_data.image_url
+            existing.item_url = item_data.item_url
+            existing.grading_company = item_data.grading_company
+            existing.grade = item_data.grade
+            existing.cert_number = item_data.cert_number
+            existing.sport = item_data.sport
+            existing.category = item_data.category
+            existing.item_type = item_data.item_type
+            existing.updated_at = datetime.utcnow()
+            updated += 1
+        else:
+            db_item = AuctionItem(
+                auction_id=auction.id,
+                auction_house="ebay",
+                external_id=item_data.external_id,
+                title=item_data.title[:500],
+                description=item_data.description,
+                category=item_data.category,
+                sport=item_data.sport,
+                grading_company=item_data.grading_company,
+                grade=item_data.grade,
+                cert_number=item_data.cert_number,
+                sub_category=item_data.sub_category,
+                image_url=item_data.image_url,
+                current_bid=item_data.current_bid,
+                starting_bid=item_data.starting_bid,
+                bid_count=item_data.bid_count,
+                end_time=end_time,
+                status=item_data.status,
+                item_url=item_data.item_url,
+                lot_number=item_data.lot_number,
+                item_type=item_data.item_type,
+            )
+            db.add(db_item)
+            saved += 1
+
+    await db.commit()
+    return {"message": f"Uploaded {saved} new, {updated} updated eBay items"}
