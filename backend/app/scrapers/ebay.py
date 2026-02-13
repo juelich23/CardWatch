@@ -262,7 +262,10 @@ class EbayScraper:
 
         self._pw = await async_playwright().start()
         proxy = self._get_proxy_config()
-        launch_kwargs = {"headless": True}
+        launch_kwargs = {
+            "headless": True,
+            "args": ["--ignore-certificate-errors"],
+        }
         if proxy:
             launch_kwargs["proxy"] = proxy
             logger.info("eBay scraper using proxy")
