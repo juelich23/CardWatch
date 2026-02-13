@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.credential import AuctionHouseCredential
     from app.models.watchlist import UserWatchlistItem
     from app.models.saved_search import SavedSearch
+    from app.models.bidding import BiddingRule, GixenSnipe, GixenCredential
 
 
 class User(Base):
@@ -49,5 +50,21 @@ class User(Base):
     saved_searches: Mapped[List["SavedSearch"]] = relationship(
         "SavedSearch",
         back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    bidding_rules: Mapped[List["BiddingRule"]] = relationship(
+        "BiddingRule",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    gixen_snipes: Mapped[List["GixenSnipe"]] = relationship(
+        "GixenSnipe",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    gixen_credential: Mapped[Optional["GixenCredential"]] = relationship(
+        "GixenCredential",
+        back_populates="user",
+        uselist=False,
         cascade="all, delete-orphan"
     )

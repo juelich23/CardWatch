@@ -19,6 +19,7 @@ from app.scrapers.vsa import VSAScraper
 from app.scrapers.hunt import HuntAuctionsScraper
 from app.scrapers.loveofthegame import LoveOfTheGameScraper
 from app.scrapers.cardhobby import CardHobbyScraper
+from app.scrapers.ebay import EbayScraper
 
 __all__ = [
     'GoldinHTTPScraper',
@@ -41,4 +42,5 @@ __all__ = [
     'HuntAuctionsScraper',
     'LoveOfTheGameScraper',
     'CardHobbyScraper',
+    'EbayScraper',
 ]

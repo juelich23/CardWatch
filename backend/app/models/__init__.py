@@ -4,6 +4,7 @@ from app.models.credential import AuctionHouseCredential, UserSession
 from app.models.watchlist import UserWatchlistItem
 from app.models.saved_search import SavedSearch
 from app.models.price_snapshot import PriceSnapshot
+from app.models.bidding import BiddingRule, GixenSnipe, GixenCredential
 
 __all__ = [
     "Auction",
@@ -14,4 +15,7 @@ __all__ = [
     "UserWatchlistItem",
     "SavedSearch",
     "PriceSnapshot",
+    "BiddingRule",
+    "GixenSnipe",
+    "GixenCredential",
 ]

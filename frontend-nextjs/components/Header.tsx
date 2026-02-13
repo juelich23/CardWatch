@@ -24,6 +24,7 @@ const AuthModal = dynamic(() => import('./AuthModal').then(mod => ({ default: mo
 const navLinks = [
   { href: '/', label: 'Browse' },
   { href: '/watchlist', label: 'Watchlist' },
+  { href: '/bidding', label: 'Bidding' },
 ];
 
 export function Header() {

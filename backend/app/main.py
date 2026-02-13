@@ -10,6 +10,7 @@ from app.api.auth import router as auth_router
 from app.api.saved_searches import router as saved_searches_router
 from app.api.ai_search import router as ai_search_router
 from app.api.scheduler import router as scheduler_router
+from app.api.bidding import router as bidding_router
 from app.services.auth import AuthService
 from app.services.scheduler import scheduler
 from app.services.scraper_jobs import SCRAPER_JOBS
@@ -273,6 +274,7 @@ app.include_router(auth_router)
 app.include_router(saved_searches_router)
 app.include_router(ai_search_router)
 app.include_router(scheduler_router)
+app.include_router(bidding_router)
 
 # GraphQL endpoint with auth context
 graphql_app = GraphQLRouter(schema, context_getter=get_context)

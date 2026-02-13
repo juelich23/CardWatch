@@ -1,532 +1,475 @@
 #!/usr/bin/env python3
 """
-eBay Auction Scraper
-Fetches auction listings from eBay using the Browse API.
+eBay Auction Scraper - Direct Web Scraping via Playwright
+Fetches auction listings from eBay search results pages.
+No API keys required. Uses Playwright to bypass eBay's bot detection.
+
 Focuses on sports cards and collectibles categories.
-
-Requires eBay Developer credentials:
-- EBAY_CLIENT_ID: Your eBay app client ID
-- EBAY_CLIENT_SECRET: Your eBay app client secret
-
-Get credentials at: https://developer.ebay.com/
 """
 
 import asyncio
-import base64
-import httpx
-import os
+import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
+
+from playwright.async_api import async_playwright, Browser, BrowserContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database import get_db, init_db
+
 from app.models import Auction, AuctionItem
-from app.scrapers.base import HealthCheckResult, retry_async
 from app.utils.sport_detection import detect_sport_from_item
+
+logger = logging.getLogger(__name__)
+
+# eBay search URL base
+EBAY_SEARCH_URL = "https://www.ebay.com/sch/i.html"
+
+# Search queries paired with categories for targeted scraping
+# Category 212 = Sports Trading Cards, 213 = Non-Sport Trading Cards
+SEARCH_CONFIGS = [
+    {"query": "PSA graded card", "category": "212"},
+    {"query": "BGS graded card", "category": "212"},
+    {"query": "SGC graded card", "category": "212"},
+    {"query": "basketball card", "category": "212"},
+    {"query": "baseball card", "category": "212"},
+    {"query": "football card", "category": "212"},
+    {"query": "hockey card", "category": "212"},
+    {"query": "soccer card", "category": "212"},
+    {"query": "pokemon card graded", "category": "213"},
+    {"query": "rookie card graded", "category": "212"},
+    {"query": "sports card lot", "category": "212"},
+]
+
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+# JavaScript that runs in the browser to extract item data from search results.
+# This is the most reliable approach - runs in the actual page context.
+EXTRACT_ITEMS_JS = """() => {
+    const results = [];
+    const lis = document.querySelectorAll('ul.srp-results > li[data-listingid]');
+
+    for (const li of lis) {
+        const listingId = li.getAttribute('data-listingid');
+        if (!listingId) continue;
+
+        // Title
+        const heading = li.querySelector('[role=heading]');
+        let title = heading ? heading.textContent.trim() : '';
+        // Clean trailing "Opens in a new window or tab" text
+        title = title.replace(/Opens in a new (?:window|tab).*$/i, '').trim();
+        if (!title || title.toLowerCase() === 'shop on ebay') continue;
+
+        // Item URL
+        const link = li.querySelector('a[href*="/itm/"]');
+        const url = link ? link.href.split('?')[0] : '';
+
+        // Price
+        const priceEl = li.querySelector('.s-card__price');
+        const priceText = priceEl ? priceEl.textContent.trim() : '';
+
+        // Bids - look for text matching "N bid(s)"
+        let bidText = '';
+        const attrs = li.querySelector('.su-card-container__attributes');
+        if (attrs) {
+            const spans = attrs.querySelectorAll('.su-styled-text');
+            for (const span of spans) {
+                const t = span.textContent.trim();
+                if (/\\d+\\s*bids?/i.test(t)) {
+                    bidText = t;
+                    break;
+                }
+            }
+        }
+
+        // Time left
+        const timeLeftEl = li.querySelector('.s-card__time-left');
+        const timeLeft = timeLeftEl ? timeLeftEl.textContent.trim() : '';
+
+        // End time text (e.g., "(Today 05:15 PM)" or "(Feb 13, 2025 10:00 AM)")
+        const timeEndEl = li.querySelector('.s-card__time-end');
+        const timeEnd = timeEndEl ? timeEndEl.textContent.trim() : '';
+
+        // Image
+        const img = li.querySelector('img[src*="ebayimg"]');
+        const imageUrl = img ? img.src : '';
+
+        // Check for Buy It Now / fixed price indicators
+        let hasBuyItNow = false;
+        let hasBids = bidText !== '';
+        if (attrs) {
+            const fullText = attrs.textContent.toLowerCase();
+            hasBuyItNow = fullText.includes('buy it now');
+        }
+
+        results.push({
+            listingId,
+            title,
+            url,
+            priceText,
+            bidText,
+            timeLeft,
+            timeEnd,
+            imageUrl,
+            hasBuyItNow,
+            hasBids,
+        });
+    }
+    return results;
+}"""
+
+
+def _parse_time_left(time_str: str) -> Optional[datetime]:
+    """Parse eBay's 'time left' string into an absolute datetime."""
+    if not time_str:
+        return None
+
+    time_str = time_str.lower().strip()
+    total_seconds = 0
+
+    days = re.search(r'(\d+)\s*d', time_str)
+    hours = re.search(r'(\d+)\s*h', time_str)
+    minutes = re.search(r'(\d+)\s*m(?!o)', time_str)  # 'm' but not 'month'
+    seconds = re.search(r'(\d+)\s*s', time_str)
+
+    if days:
+        total_seconds += int(days.group(1)) * 86400
+    if hours:
+        total_seconds += int(hours.group(1)) * 3600
+    if minutes:
+        total_seconds += int(minutes.group(1)) * 60
+    if seconds:
+        total_seconds += int(seconds.group(1))
+
+    if total_seconds == 0:
+        return None
+
+    return datetime.utcnow() + timedelta(seconds=total_seconds)
+
+
+def _parse_price(price_str: str) -> Optional[float]:
+    """Parse a price string like '$12.50' or '$1,234.00' into a float."""
+    if not price_str:
+        return None
+    cleaned = re.sub(r'[^\d.]', '', price_str.replace(',', ''))
+    try:
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_bid_count(bid_text: str) -> int:
+    """Parse '3 bids' or '1 bid' into an integer."""
+    if not bid_text:
+        return 0
+    match = re.search(r'(\d+)', bid_text)
+    return int(match.group(1)) if match else 0
+
+
+def _extract_grading_info(title: str) -> dict:
+    """Extract grading company, grade, and cert number from title."""
+    result = {"grading_company": None, "grade": None, "cert_number": None}
+
+    grading_pattern = r'\b(PSA|BGS|Beckett|SGC|CGC)\s+(\d+(?:\.\d+)?)\b'
+    match = re.search(grading_pattern, title, re.IGNORECASE)
+    if match:
+        company = match.group(1).upper()
+        company_map = {"BGS": "Beckett", "BECKETT": "Beckett"}
+        result["grading_company"] = company_map.get(company, match.group(1))
+        result["grade"] = match.group(2)
+
+    cert_match = re.search(r'#?\s*(\d{7,10})\b', title)
+    if cert_match:
+        result["cert_number"] = cert_match.group(1)
+
+    return result
+
+
+def _extract_category(title: str) -> Optional[str]:
+    """Extract sport/category from title keywords."""
+    categories = {
+        "Basketball": ["Basketball", "NBA", "Kobe", "Jordan", "LeBron", "Luka"],
+        "Football": ["Football", "NFL", "Brady", "Mahomes", "Burrow"],
+        "Baseball": ["Baseball", "MLB", "Ohtani", "Trout", "Jeter"],
+        "Hockey": ["Hockey", "NHL", "Gretzky", "McDavid"],
+        "Soccer": ["Soccer", "FIFA", "Messi", "Ronaldo", "Haaland"],
+        "Pokemon": ["Pokemon", "Pikachu", "Charizard"],
+        "Magic The Gathering": ["Magic", "MTG"],
+    }
+    title_upper = title.upper()
+    for cat, keywords in categories.items():
+        if any(kw.upper() in title_upper for kw in keywords):
+            return cat
+    return None
 
 
 class EbayScraper:
-    def __init__(self, sandbox: bool = None):
-        self.client_id = os.getenv("EBAY_CLIENT_ID", "")
-        self.client_secret = os.getenv("EBAY_CLIENT_SECRET", "")
+    """Scrape eBay auction listings via Playwright browser automation."""
 
-        # Auto-detect sandbox mode from environment or client_id
-        if sandbox is None:
-            sandbox = os.getenv("EBAY_SANDBOX", "").lower() in ("true", "1", "yes")
-            # Also detect if client_id contains SBX (sandbox indicator)
-            if not sandbox and "SBX" in self.client_id.upper():
-                sandbox = True
+    def __init__(self):
+        self._browser: Optional[Browser] = None
+        self._context: Optional[BrowserContext] = None
 
-        self.sandbox = sandbox
-
-        # eBay API endpoints (Sandbox vs Production)
-        if self.sandbox:
-            self.auth_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
-            self.browse_url = "https://api.sandbox.ebay.com/buy/browse/v1/item_summary/search"
-            print("   [eBay Sandbox Mode]")
-        else:
-            self.auth_url = "https://api.ebay.com/identity/v1/oauth2/token"
-            self.browse_url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
-
-        # Access token (cached)
-        self._access_token = None
-        self._token_expiry = None
-
-        # Sports cards and collectibles category IDs
-        # 212 = Sports Trading Cards
-        # 213 = Non-Sport Trading Cards
-        # 64482 = Sports Memorabilia
-        self.category_ids = ["212", "213", "64482"]
-
-    async def get_access_token(self, client: httpx.AsyncClient) -> str:
-        """Get OAuth access token using client credentials flow."""
-        if self._access_token and self._token_expiry and datetime.utcnow() < self._token_expiry:
-            return self._access_token
-
-        if not self.client_id or not self.client_secret:
-            raise ValueError(
-                "eBay API credentials not configured. "
-                "Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET environment variables."
-            )
-
-        # Base64 encode credentials
-        credentials = f"{self.client_id}:{self.client_secret}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
-        }
-
-        data = {
-            "grant_type": "client_credentials",
-            "scope": "https://api.ebay.com/oauth/api_scope"
-        }
-
-        response = await client.post(self.auth_url, headers=headers, data=data, timeout=30.0)
-        response.raise_for_status()
-
-        token_data = response.json()
-        self._access_token = token_data["access_token"]
-
-        # Set expiry (usually 2 hours, subtract 5 min for safety)
-        expires_in = token_data.get("expires_in", 7200) - 300
-        from datetime import timedelta
-        self._token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
-
-        print(f"   Got eBay access token (expires in {expires_in}s)")
-        return self._access_token
-
-    def extract_grading_info(self, title: str, condition_descriptors: List[Dict] = None) -> dict:
-        """Extract grading company, grade, and cert number from title and condition descriptors."""
-        result = {
-            'grading_company': None,
-            'grade': None,
-            'cert_number': None
-        }
-
-        # Check condition descriptors first (eBay's structured grading data)
-        if condition_descriptors:
-            for desc in condition_descriptors:
-                name = desc.get('name', '').lower()
-                values = desc.get('values', [])
-                if values:
-                    value = values[0].get('content', '')
-
-                    if 'grader' in name or 'certification' in name:
-                        result['grading_company'] = value
-                    elif 'grade' in name:
-                        result['grade'] = value
-                    elif 'cert' in name or 'serial' in name:
-                        result['cert_number'] = value
-
-        # Fall back to title parsing
-        if not result['grading_company']:
-            grading_pattern = r'\b(PSA|BGS|Beckett|SGC|CGC)\s+(\d+(?:\.\d+)?)\b'
-            match = re.search(grading_pattern, title, re.IGNORECASE)
-
-            if match:
-                company = match.group(1)
-                grade = match.group(2)
-
-                company_map = {
-                    'BGS': 'Beckett',
-                    'BECKETT': 'Beckett'
-                }
-                result['grading_company'] = company_map.get(company.upper(), company)
-                result['grade'] = grade
-
-        # Try to extract cert number from title
-        if not result['cert_number']:
-            cert_pattern = r'#?\s*(\d{7,10})\b'  # 7-10 digit numbers are usually cert numbers
-            cert_match = re.search(cert_pattern, title)
-            if cert_match:
-                result['cert_number'] = cert_match.group(1)
-
-        return result
-
-    def extract_category(self, title: str, category_path: str = None) -> Optional[str]:
-        """Extract sport/category from title or category path."""
-        if category_path:
-            path_lower = category_path.lower()
-            if 'basketball' in path_lower:
-                return 'Basketball'
-            elif 'football' in path_lower:
-                return 'Football'
-            elif 'baseball' in path_lower:
-                return 'Baseball'
-            elif 'hockey' in path_lower:
-                return 'Hockey'
-            elif 'soccer' in path_lower:
-                return 'Soccer'
-            elif 'pokemon' in path_lower:
-                return 'Pokemon'
-            elif 'magic' in path_lower or 'mtg' in path_lower:
-                return 'Magic The Gathering'
-
-        # Fall back to title analysis
-        categories = {
-            'Basketball': ['Basketball', 'NBA', 'Kobe', 'Jordan', 'LeBron'],
-            'Football': ['Football', 'NFL', 'Brady', 'Mahomes'],
-            'Baseball': ['Baseball', 'MLB', 'Ohtani', 'Trout'],
-            'Hockey': ['Hockey', 'NHL', 'Gretzky'],
-            'Soccer': ['Soccer', 'FIFA', 'Messi', 'Ronaldo'],
-            'Pokemon': ['Pokemon', 'Pikachu', 'Charizard'],
-            'Magic The Gathering': ['Magic', 'MTG'],
-        }
-
-        title_upper = title.upper()
-        for category, keywords in categories.items():
-            for keyword in keywords:
-                if keyword.upper() in title_upper:
-                    return category
-
-        return None
-
-    @retry_async(max_retries=3, delay=1.0)
-    async def search_auctions(
-        self,
-        client: httpx.AsyncClient,
-        access_token: str,
-        category_id: str = None,
-        query: str = None,
-        offset: int = 0,
-        limit: int = 200
-    ) -> dict:
-        """Search for auction listings using eBay Browse API."""
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
-        }
-
+    def _build_search_url(
+        self, query: str, category: str = None, page: int = 1, items_per_page: int = 240,
+    ) -> str:
+        """Build an eBay search URL for auction-only listings, sorted by ending soonest."""
         params = {
-            "limit": min(limit, 200),  # eBay max is 200
-            "offset": offset,
-            "filter": "buyingOptions:{AUCTION}",  # Auctions only
-            "sort": "endingSoonest",  # Show auctions ending soon first
-            "fieldgroups": "EXTENDED"  # Get additional fields
+            "_nkw": query,
+            "LH_Auction": "1",
+            "_sop": "1",
+            "_ipg": str(items_per_page),
+            "_pgn": str(page),
         }
+        if category:
+            params["_sacat"] = category
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        return f"{EBAY_SEARCH_URL}?{qs}"
 
-        if category_id:
-            params["category_ids"] = category_id
+    async def _ensure_browser(self):
+        """Launch browser and visit eBay homepage to establish session cookies."""
+        if self._browser is not None:
+            return
 
-        if query:
-            params["q"] = query
-        else:
-            # Default search for trading cards
-            params["q"] = "trading cards"
-
-        response = await client.get(
-            self.browse_url,
-            headers=headers,
-            params=params,
-            timeout=30.0
+        pw = await async_playwright().start()
+        self._browser = await pw.chromium.launch(headless=True)
+        self._context = await self._browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1920, "height": 1080},
         )
-        response.raise_for_status()
-        return response.json()
+        # Visit homepage first to get cookies and bypass challenge
+        page = await self._context.new_page()
+        await page.goto("https://www.ebay.com", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
+        await page.close()
 
-    def normalize_item(self, ebay_item: dict) -> dict:
-        """Convert eBay item to our standard format."""
-        title = ebay_item.get('title', '')
+    async def _close_browser(self):
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
+            self._context = None
 
-        # Get image URL
-        image_url = None
-        if ebay_item.get('image'):
-            image_url = ebay_item['image'].get('imageUrl')
-        elif ebay_item.get('thumbnailImages'):
-            image_url = ebay_item['thumbnailImages'][0].get('imageUrl')
+    async def _fetch_search_page(self, url: str) -> List[Dict]:
+        """Fetch a search results page and extract item data via in-browser JS."""
+        await self._ensure_browser()
 
-        # Get current bid or price
-        current_bid = None
-        if ebay_item.get('currentBidPrice'):
-            current_bid = float(ebay_item['currentBidPrice'].get('value', 0))
-        elif ebay_item.get('price'):
-            current_bid = float(ebay_item['price'].get('value', 0))
+        page = await self._context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
 
-        # Get bid count
-        bid_count = ebay_item.get('bidCount', 0)
+            # Check for challenge redirect
+            if "challenge" in page.url.lower():
+                logger.warning(f"eBay challenge detected at {page.url}")
+                return []
 
-        # Get end time
-        end_time = None
-        if ebay_item.get('itemEndDate'):
-            try:
-                end_time = datetime.fromisoformat(
-                    ebay_item['itemEndDate'].replace('Z', '+00:00')
-                )
-            except:
-                pass
+            raw_items = await page.evaluate(EXTRACT_ITEMS_JS)
+            return raw_items
+        except Exception as e:
+            logger.error(f"Error fetching {url}: {e}")
+            return []
+        finally:
+            await page.close()
 
-        # Extract grading info
-        condition_descriptors = ebay_item.get('conditionDescriptors', [])
-        grading_info = self.extract_grading_info(title, condition_descriptors)
+    def _normalize_item(self, raw: Dict) -> Optional[Dict]:
+        """Convert raw JS-extracted item dict to our DB format."""
+        listing_id = raw.get("listingId", "")
+        title = raw.get("title", "")
+        if not listing_id or not title:
+            return None
 
-        # Get category
-        category_path = None
-        if ebay_item.get('categories'):
-            category_path = ' > '.join([c.get('categoryName', '') for c in ebay_item['categories']])
-        category = self.extract_category(title, category_path)
+        # Auction-only filtering:
+        # If item has "Buy It Now" but no bid info, it's fixed-price
+        if raw.get("hasBuyItNow") and not raw.get("hasBids"):
+            return None
 
-        # Detect sport from item content
-        description = ebay_item.get('shortDescription', '')
-        sport = detect_sport_from_item(title, description, category).value
+        # Must have time left (auctions always show time remaining)
+        time_left = raw.get("timeLeft", "")
+        if not time_left:
+            return None
 
-        # Build item URL
-        item_url = ebay_item.get('itemWebUrl') or ebay_item.get('itemHref')
+        current_bid = _parse_price(raw.get("priceText", ""))
+        bid_count = _parse_bid_count(raw.get("bidText", ""))
+        end_time = _parse_time_left(time_left)
 
-        # Get item ID (strip the version suffix if present)
-        item_id = ebay_item.get('itemId', '')
-        external_id = item_id.split('|')[0] if '|' in item_id else item_id
+        grading_info = _extract_grading_info(title)
+        category = _extract_category(title)
+        sport = detect_sport_from_item(title, "", category or "")
+        sport_value = sport.value if hasattr(sport, "value") else str(sport)
 
-        # Get seller info
-        seller = ebay_item.get('seller', {})
-        seller_name = seller.get('username', '')
+        image_url = raw.get("imageUrl", "")
+        item_url = raw.get("url", "")
 
         return {
-            "external_id": external_id,
-            "lot_number": None,  # eBay doesn't use lot numbers
-            "cert_number": grading_info['cert_number'],
-            "sub_category": category,
-            "grading_company": grading_info['grading_company'],
-            "grade": grading_info['grade'],
-            "title": title[:500] if title else "",
-            "description": description,
+            "external_id": listing_id,
+            "title": title[:500],
+            "description": "",
             "category": category,
-            "sport": sport,
-            "image_url": image_url,
+            "sport": sport_value,
+            "grading_company": grading_info["grading_company"],
+            "grade": grading_info["grade"],
+            "cert_number": grading_info["cert_number"],
+            "sub_category": category,
+            "image_url": image_url or None,
             "current_bid": current_bid,
             "starting_bid": None,
             "bid_count": bid_count,
             "end_time": end_time,
             "status": "Live",
-            "item_url": item_url,
+            "item_url": item_url or None,
+            "lot_number": None,
             "raw_data": {
-                "ebay": ebay_item,
-                "seller": seller_name,
-                "condition": ebay_item.get('condition'),
-                "location": ebay_item.get('itemLocation', {}).get('country')
-            }
+                "time_left_text": time_left,
+                "price_text": raw.get("priceText", ""),
+                "bid_text": raw.get("bidText", ""),
+            },
         }
 
     async def scrape(self, db: AsyncSession, max_items: int = 5000) -> list:
-        """Main scraping function - fetches auction listings from eBay."""
-        print("🔍 Fetching auction items from eBay...")
+        """Main entry point: scrape eBay auction listings and save to DB."""
+        logger.info(f"Starting eBay web scrape (max_items={max_items})")
 
-        if not self.client_id or not self.client_secret:
-            print("⚠️ eBay API credentials not configured!")
-            print("   Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET environment variables")
-            print("   Get credentials at: https://developer.ebay.com/")
-            return []
+        all_items: Dict[str, dict] = {}
 
-        async with httpx.AsyncClient() as client:
-            # Get access token
-            print("📡 Step 1: Getting eBay access token...")
-            try:
-                access_token = await self.get_access_token(client)
-            except Exception as e:
-                print(f"❌ Failed to get access token: {e}")
-                return []
-
-            # Fetch items from each category
-            print("📡 Step 2: Searching for auction listings...")
-
-            all_items = []
-            seen_ids = set()
-
-            # Search queries for different card types
-            search_queries = [
-                "sports trading cards",
-                "pokemon cards",
-                "baseball cards PSA",
-                "basketball cards BGS",
-                "football cards graded",
-            ]
-
-            for query in search_queries:
+        try:
+            for config in SEARCH_CONFIGS:
                 if len(all_items) >= max_items:
                     break
 
-                print(f"\n   Searching: '{query}'...")
-                offset = 0
+                query = config["query"]
+                category = config.get("category")
+                logger.info(f"  Searching: '{query}' (cat={category})")
 
-                while len(all_items) < max_items:
-                    try:
-                        response = await self.search_auctions(
-                            client,
-                            access_token,
-                            query=query,
-                            offset=offset,
-                            limit=200
-                        )
+                page_num = 1
+                max_pages = 5
+                consecutive_empty = 0
 
-                        items = response.get('itemSummaries', [])
-                        total = response.get('total', 0)
+                while page_num <= max_pages and len(all_items) < max_items:
+                    url = self._build_search_url(query, category, page_num)
 
-                        if offset == 0:
-                            print(f"   Found {total} auctions for '{query}'")
+                    raw_items = await self._fetch_search_page(url)
 
-                        if not items:
+                    if not raw_items:
+                        consecutive_empty += 1
+                        if consecutive_empty >= 2:
                             break
+                        page_num += 1
+                        await asyncio.sleep(3)
+                        continue
 
-                        # Deduplicate and add items
-                        new_count = 0
-                        for item in items:
-                            item_id = item.get('itemId', '').split('|')[0]
-                            if item_id and item_id not in seen_ids:
-                                seen_ids.add(item_id)
-                                all_items.append(item)
-                                new_count += 1
+                    consecutive_empty = 0
+                    new_count = 0
+                    for raw in raw_items:
+                        item = self._normalize_item(raw)
+                        if item and item["external_id"] not in all_items:
+                            all_items[item["external_id"]] = item
+                            new_count += 1
 
-                        print(f"   Offset {offset}: Got {len(items)}, {new_count} new (total: {len(all_items)})")
+                    logger.info(
+                        f"    Page {page_num}: {len(raw_items)} found, "
+                        f"{new_count} new auctions (total: {len(all_items)})"
+                    )
 
-                        # Check if we've gotten all items
-                        offset += len(items)
-                        if offset >= total or len(items) < 200:
-                            break
-
-                        # Rate limiting
-                        await asyncio.sleep(0.5)
-
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 429:
-                            print("   ⚠️ Rate limited, waiting 30s...")
-                            await asyncio.sleep(30)
-                        else:
-                            print(f"   ❌ Error: {e}")
-                            break
-                    except Exception as e:
-                        print(f"   ❌ Error: {e}")
+                    if new_count == 0:
                         break
 
-            items_to_process = all_items[:max_items]
-            print(f"\n✅ Fetched {len(items_to_process)} unique auction items")
+                    page_num += 1
+                    await asyncio.sleep(3)
 
-            # Normalize items
-            print("\n📡 Step 3: Normalizing items...")
-            normalized_items = []
-            for item in items_to_process:
-                try:
-                    normalized = self.normalize_item(item)
-                    normalized_items.append(normalized)
-                except Exception as e:
-                    print(f"   ⚠️ Error normalizing item: {e}")
+        finally:
+            await self._close_browser()
 
-            print(f"   ✅ Normalized {len(normalized_items)} items")
+        items_list = list(all_items.values())[:max_items]
+        logger.info(f"  Fetched {len(items_list)} unique eBay auction items")
 
-            # Create or update auction record
-            print("\n📦 Creating/updating auction record...")
-            auction_external_id = "ebay-auctions"
+        if not items_list:
+            return []
 
-            result = await db.execute(
-                select(Auction).where(
-                    Auction.auction_house == "ebay",
-                    Auction.external_id == auction_external_id
-                )
+        # Get or create auction record
+        result = await db.execute(
+            select(Auction).where(
+                Auction.auction_house == "ebay",
+                Auction.external_id == "ebay-auctions",
             )
-            auction = result.scalar_one_or_none()
+        )
+        auction = result.scalar_one_or_none()
+        if not auction:
+            auction = Auction(
+                auction_house="ebay",
+                external_id="ebay-auctions",
+                title="eBay Auctions",
+                status="active",
+            )
+            db.add(auction)
+            await db.flush()
 
-            if not auction:
-                auction = Auction(
-                    auction_house="ebay",
-                    external_id=auction_external_id,
-                    title="eBay Auctions",
-                    status="active"
-                )
-                db.add(auction)
-                await db.flush()
-
-            print(f"✅ Auction ID: {auction.id}")
-
-            # Save items to database
-            print(f"\n💾 Saving {len(normalized_items)} items to database...")
-
-            saved_count = 0
-            for item_data in normalized_items:
-                try:
-                    result = await db.execute(
-                        select(AuctionItem).where(
-                            AuctionItem.auction_house == "ebay",
-                            AuctionItem.external_id == item_data["external_id"]
-                        )
+        # Upsert items
+        saved = 0
+        for item_data in items_list:
+            try:
+                result = await db.execute(
+                    select(AuctionItem).where(
+                        AuctionItem.auction_house == "ebay",
+                        AuctionItem.external_id == item_data["external_id"],
                     )
-                    existing_item = result.scalar_one_or_none()
+                )
+                existing = result.scalar_one_or_none()
 
-                    if existing_item:
-                        # Update existing item
-                        for key, value in item_data.items():
-                            if key not in ['external_id', 'auction_house']:
-                                setattr(existing_item, key, value)
-                        existing_item.updated_at = datetime.utcnow()
-                    else:
-                        # Create new item
-                        item = AuctionItem(
-                            auction_id=auction.id,
-                            auction_house="ebay",
-                            **item_data
-                        )
-                        db.add(item)
+                if existing:
+                    for key, value in item_data.items():
+                        if key != "external_id":
+                            setattr(existing, key, value)
+                    existing.updated_at = datetime.utcnow()
+                else:
+                    db_item = AuctionItem(
+                        auction_id=auction.id,
+                        auction_house="ebay",
+                        **item_data,
+                    )
+                    db.add(db_item)
+                saved += 1
+            except Exception as e:
+                logger.error(f"    Error saving {item_data.get('external_id')}: {e}")
 
-                    saved_count += 1
-                except Exception as e:
-                    print(f"   ⚠️ Error saving item {item_data.get('external_id')}: {e}")
+        await db.commit()
+        logger.info(f"  Saved {saved} eBay items to database")
+        return items_list
 
-            await db.commit()
-            print(f"✅ Saved {saved_count} items to database")
-
-            return normalized_items
-
-    async def health_check(self) -> HealthCheckResult:
-        """Check if eBay API is accessible."""
-        if not self.client_id or not self.client_secret:
-            return HealthCheckResult(
-                healthy=False,
-                message="eBay API credentials not configured",
-                details={"error": "Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET"}
-            )
-
+    async def health_check(self) -> dict:
+        """Quick check that eBay search pages are reachable and parseable."""
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                access_token = await self.get_access_token(client)
-
-                # Try a simple search
-                response = await self.search_auctions(
-                    client,
-                    access_token,
-                    query="trading cards",
-                    limit=1
-                )
-
-                total = response.get('total', 0)
-                mode = "Sandbox" if self.sandbox else "Production"
-                return HealthCheckResult(
-                    healthy=True,
-                    message=f"eBay Browse API is accessible ({mode})",
-                    details={"total_auctions": total, "mode": mode}
-                )
-
+            await self._ensure_browser()
+            url = self._build_search_url("trading cards", "212", page=1, items_per_page=60)
+            items = await self._fetch_search_page(url)
+            await self._close_browser()
+            return {
+                "healthy": len(items) > 0,
+                "message": f"Found {len(items)} items on test page",
+            }
         except Exception as e:
-            return HealthCheckResult(
-                healthy=False,
-                message=f"eBay API error: {str(e)}",
-                details={"error": str(e)}
-            )
+            await self._close_browser()
+            return {"healthy": False, "message": str(e)}
 
 
 async def main():
-    """Entry point for running the scraper."""
-    await init_db()
+    """Entry point for running the scraper standalone."""
+    from app.database import init_db, get_db
 
+    logging.basicConfig(level=logging.INFO)
+
+    await init_db()
     scraper = EbayScraper()
 
     async for db in get_db():
-        items = await scraper.scrape(db, max_items=1000)
-
-        print(f"\n✅ Scraping complete!")
-        print(f"   Total items: {len(items)}")
-
-        graded_items = [item for item in items if item.get('grading_company')]
-        print(f"   Items with grading data: {len(graded_items)}")
+        items = await scraper.scrape(db, max_items=500)
+        print(f"\nScraping complete! Total items: {len(items)}")
+        graded = [i for i in items if i.get("grading_company")]
+        print(f"Items with grading data: {len(graded)}")
+        break
 
 
 if __name__ == "__main__":
