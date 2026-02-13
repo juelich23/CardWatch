@@ -84,7 +84,9 @@ export default function BiddingDashboard() {
   }, [loadStats]);
 
   // GraphQL query for eBay items
-  const { data, loading: itemsLoading, fetchMore } = useQuery(GET_AUCTION_ITEMS, {
+  const { data, loading: itemsLoading, fetchMore } = useQuery<{
+    auctionItems: { items: AuctionItem[]; total: number; hasMore: boolean };
+  }>(GET_AUCTION_ITEMS, {
     variables: {
       page: 1,
       pageSize: PAGE_SIZE,
