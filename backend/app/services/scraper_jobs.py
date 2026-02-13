@@ -409,6 +409,42 @@ async def scrape_alt(max_items: int = 10000):
             raise
 
 
+@with_scraper_lock
+async def scrape_ebay(max_items: int = 5000):
+    """Scrape eBay auctions via direct web scraping."""
+    logger.info(f"Starting eBay scrape (max_items={max_items})")
+    from app.scrapers.ebay import EbayScraper
+
+    async_session = get_db_session()
+    async with async_session() as db:
+        try:
+            scraper = EbayScraper()
+            items = await scraper.scrape(db, max_items=max_items)
+            logger.info(f"eBay scrape complete: {len(items)} items")
+            return {"items": len(items)}
+        except Exception as e:
+            logger.error(f"eBay scrape failed: {e}")
+            raise
+
+
+async def run_bidding_rules_job():
+    """Scheduled job: run bidding rule matching for all users."""
+    from app.services.bidding_engine import run_bidding_rules
+    return await run_bidding_rules()
+
+
+async def submit_pending_snipes_job():
+    """Scheduled job: submit pending snipes to Gixen."""
+    from app.services.bidding_engine import submit_pending_snipes
+    return await submit_pending_snipes()
+
+
+async def sync_gixen_status_job():
+    """Scheduled job: sync Gixen snipe outcomes."""
+    from app.services.bidding_engine import sync_gixen_status
+    return await sync_gixen_status()
+
+
 # Job registry for easy access
 SCRAPER_JOBS = {
     "cardhobby": {
@@ -431,19 +467,40 @@ SCRAPER_JOBS = {
         "default_interval": 60,  # every hour
         "description": "Scrape Alt.xyz liquid auctions",
     },
-    "heritage": {
-        "func": scrape_heritage,
-        "default_interval": 120,  # every 2 hours - larger site
-        "description": "Scrape Heritage auctions",
-    },
+    # Heritage disabled - requires JavaScript rendering (ScraperAPI or Playwright with browsers)
+    # "heritage": {
+    #     "func": scrape_heritage,
+    #     "default_interval": 120,
+    #     "description": "Scrape Heritage auctions",
+    # },
     "pristine": {
         "func": scrape_pristine,
         "default_interval": 240,  # every 4 hours - large scrape
         "description": "Scrape Pristine auctions",
     },
+    "ebay": {
+        "func": scrape_ebay,
+        "default_interval": 30,  # every 30 minutes
+        "description": "Scrape eBay auctions via Browse API",
+    },
     "cleanup": {
         "func": cleanup_ended_auctions,
         "default_interval": 60 * 24,  # Daily
         "description": "Clean up old ended auctions",
+    },
+    "bidding_rules": {
+        "func": run_bidding_rules_job,
+        "default_interval": 10,  # every 10 minutes
+        "description": "Match bidding rules to eBay items",
+    },
+    "bidding_submit": {
+        "func": submit_pending_snipes_job,
+        "default_interval": 5,  # every 5 minutes
+        "description": "Submit pending snipes to Gixen",
+    },
+    "bidding_sync": {
+        "func": sync_gixen_status_job,
+        "default_interval": 15,  # every 15 minutes
+        "description": "Sync Gixen snipe outcomes",
     },
 }
