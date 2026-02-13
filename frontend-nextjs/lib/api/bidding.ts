@@ -8,7 +8,7 @@ import type {
   RuleTestResult,
 } from '@/lib/types/bidding';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://cardwatch-api-production.up.railway.app';
 
 class BiddingAPI {
   private getHeaders(): HeadersInit {

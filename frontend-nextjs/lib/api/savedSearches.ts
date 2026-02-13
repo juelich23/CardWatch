@@ -2,7 +2,7 @@
  * Saved Searches API client
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://cardwatch-api-production.up.railway.app';
 
 export interface SavedSearchFilters {
   search?: string;
