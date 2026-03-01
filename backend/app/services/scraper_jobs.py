@@ -273,8 +273,7 @@ async def scrape_goldin(max_items: int = 1000):
     async with async_session() as db:
         try:
             scraper = GoldinHTTPScraper(db)
-            items = await scraper.scrape_auction_items(max_items=max_items)
-            await db.commit()
+            items = await scraper.scrape(db, max_items=max_items)
             logger.info(f"Goldin scrape complete: {len(items)} items")
             return {"items": len(items)}
         except Exception as e:
@@ -291,9 +290,8 @@ async def scrape_fanatics(max_items: int = 1000):
     async_session = get_db_session()
     async with async_session() as db:
         try:
-            scraper = FanaticsScraper(db)
-            items = await scraper.scrape_auction_items(max_items=max_items)
-            await db.commit()
+            scraper = FanaticsScraper()
+            items = await scraper.scrape(db, max_items=max_items)
             logger.info(f"Fanatics scrape complete: {len(items)} items")
             return {"items": len(items)}
         except Exception as e:
