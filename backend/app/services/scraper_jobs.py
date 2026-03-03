@@ -355,7 +355,7 @@ async def scrape_alt(max_items: int = 10000):
 
 
 @with_scraper_lock
-async def scrape_ebay(max_items: int = 5000):
+async def scrape_ebay(max_items: int = 10000):
     """Scrape eBay auctions via direct web scraping."""
     logger.info(f"Starting eBay scrape (max_items={max_items})")
     from app.scrapers.ebay import EbayScraper
