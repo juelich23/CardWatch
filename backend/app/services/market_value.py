@@ -7,7 +7,7 @@ Uses Claude API to estimate card values based on title and market data
 import os
 import json
 import anthropic
-import redis
+import redis.asyncio as redis
 from typing import Optional
 from datetime import datetime, timedelta
 from app.config import get_settings
@@ -20,35 +20,43 @@ class MarketValueEstimator:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
 
-        # Try to connect to Redis, fall back to in-memory cache if not available
-        try:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
-            # Test connection
-            self.redis_client.ping()
-            self.use_redis = True
-            print("✅ Connected to Redis for market value caching")
-        except (redis.ConnectionError, redis.TimeoutError) as e:
-            print(f"⚠️  Redis not available, using in-memory cache: {e}")
-            self.redis_client = None
-            self.use_redis = False
-            self.cache = {}  # Fallback in-memory cache
+        # Redis client will be lazily initialized
+        self._redis_client = None
+        self._redis_initialized = False
+        self.use_redis = False
+        self.cache = {}  # Fallback in-memory cache
 
         self.cache_ttl = timedelta(hours=24)  # Cache for 24 hours
         self.cache_ttl_seconds = int(self.cache_ttl.total_seconds())
+
+    async def _ensure_redis(self):
+        """Lazily initialize async Redis connection."""
+        if self._redis_initialized:
+            return
+        self._redis_initialized = True
+        try:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            self._redis_client = redis.from_url(redis_url, decode_responses=True)
+            await self._redis_client.ping()
+            self.use_redis = True
+        except Exception as e:
+            print(f"Redis not available, using in-memory cache: {e}")
+            self._redis_client = None
+            self.use_redis = False
 
     def _get_cache_key(self, title: str, grading_company: Optional[str], grade: Optional[str]) -> str:
         """Generate cache key for a card"""
         key = f"market_value:{title}|{grading_company or 'NONE'}|{grade or 'NONE'}"
         return key
 
-    def _get_cached_value(self, cache_key: str) -> Optional[dict]:
+    async def _get_cached_value(self, cache_key: str) -> Optional[dict]:
         """Get value from cache (Redis or in-memory)"""
-        if self.use_redis and self.redis_client:
+        await self._ensure_redis()
+        if self.use_redis and self._redis_client:
             try:
-                cached = self.redis_client.get(cache_key)
+                cached = await self._redis_client.get(cache_key)
                 if cached:
                     return json.loads(cached)
             except Exception as e:
@@ -61,11 +69,11 @@ class MarketValueEstimator:
                     return entry['data']
         return None
 
-    def _set_cached_value(self, cache_key: str, value: dict):
+    async def _set_cached_value(self, cache_key: str, value: dict):
         """Set value in cache (Redis or in-memory)"""
-        if self.use_redis and self.redis_client:
+        if self.use_redis and self._redis_client:
             try:
-                self.redis_client.setex(
+                await self._redis_client.setex(
                     cache_key,
                     self.cache_ttl_seconds,
                     json.dumps(value)
@@ -79,7 +87,7 @@ class MarketValueEstimator:
                 'timestamp': datetime.now()
             }
 
-    def estimate_value(
+    async def estimate_value(
         self,
         title: str,
         grading_company: Optional[str] = None,
@@ -100,7 +108,7 @@ class MarketValueEstimator:
 
         # Check cache first
         cache_key = self._get_cache_key(title, grading_company, grade)
-        cached_value = self._get_cached_value(cache_key)
+        cached_value = await self._get_cached_value(cache_key)
         if cached_value:
             return cached_value
 
@@ -144,7 +152,7 @@ Respond ONLY with valid JSON in this exact format:
         try:
             # Call Claude API
             # Using Haiku for cost-effectiveness
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model="claude-3-haiku-20240307",
                 max_tokens=1024,
                 messages=[
@@ -170,7 +178,7 @@ Respond ONLY with valid JSON in this exact format:
                     raise ValueError(f"Missing required key: {key}")
 
             # Cache the result
-            self._set_cached_value(cache_key, result)
+            await self._set_cached_value(cache_key, result)
 
             return result
 

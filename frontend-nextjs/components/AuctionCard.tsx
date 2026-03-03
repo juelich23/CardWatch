@@ -8,6 +8,8 @@ import { useAuth } from '@/lib/providers/AuthProvider';
 import { useState, memo } from 'react';
 import Image from 'next/image';
 import { toast } from 'sonner';
+import { Clock } from 'lucide-react';
+import { formatCurrency, formatTimeRemaining, isEndingSoon } from '@/lib/formatters';
 
 interface AuctionCardProps {
   item: AuctionItem;
@@ -47,50 +49,8 @@ export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps)
     }
     if (isToggling) return;
 
-    // Debug: Check token status before mutation
-    const token = localStorage.getItem('access_token');
-    console.log('[Watchlist] Token exists:', !!token);
-    console.log('[Watchlist] Item ID:', item.id, 'Type:', typeof item.id);
-
     setIsToggling(true);
     await toggleWatch({ variables: { itemId: item.id } });
-  };
-
-  const formatCurrency = (amount?: number) => {
-    if (amount === undefined || amount === null) return 'N/A';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
-
-  const formatTimeRemaining = (endTime?: string) => {
-    if (!endTime) return 'Unknown';
-    const utcEndTime = endTime.includes('Z') || endTime.includes('+') ? endTime : endTime + 'Z';
-    const end = new Date(utcEndTime);
-    const now = new Date();
-    const diff = end.getTime() - now.getTime();
-
-    if (diff < 0) return 'Ended';
-
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-  };
-
-  const isEndingSoon = () => {
-    if (!item.endTime) return false;
-    const utcEndTime = item.endTime.includes('Z') || item.endTime.includes('+') ? item.endTime : item.endTime + 'Z';
-    const end = new Date(utcEndTime);
-    const now = new Date();
-    const diff = end.getTime() - now.getTime();
-    return diff > 0 && diff < 1000 * 60 * 60 * 24; // Less than 24 hours
   };
 
   const auctionHouseBadges: Record<string, { bg: string; text: string }> = {
@@ -160,10 +120,10 @@ export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps)
         </div>
 
         {/* Ending soon indicator - Smaller on mobile */}
-        {isEndingSoon() && (
+        {isEndingSoon(item.endTime) && (
           <div className="absolute bottom-1.5 sm:bottom-2 left-1.5 sm:left-2 z-10">
             <div className="bg-red-500/90 text-white text-[10px] sm:text-xs font-semibold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md flex items-center gap-0.5 sm:gap-1 animate-pulse">
-              <ClockIcon className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+              <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
               <span className="hidden sm:inline">Ending </span>Soon
             </div>
           </div>
@@ -233,7 +193,7 @@ export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps)
                 <span className="text-border hidden sm:inline">·</span>
               </>
             )}
-            <span className={`${isEndingSoon() ? 'text-red-400 font-medium' : ''}`}>
+            <span className={`${isEndingSoon(item.endTime) ? 'text-red-400 font-medium' : ''}`}>
               {formatTimeRemaining(item.endTime)}
             </span>
           </div>
@@ -271,11 +231,3 @@ export const AuctionCard = memo(function AuctionCard({ item }: AuctionCardProps)
     </div>
   );
 });
-
-function ClockIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}

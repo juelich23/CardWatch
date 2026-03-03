@@ -1,14 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/providers/AuthProvider';
 import { ConnectionCard } from '@/components/ConnectionCard';
 import { credentialsAPI, CredentialStatus, AUCTION_HOUSES } from '@/lib/api/credentials';
 
 export default function ConnectionsPage() {
   const { user } = useAuth();
-  const router = useRouter();
   const [statuses, setStatuses] = useState<CredentialStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,13 +32,10 @@ export default function ConnectionsPage() {
   useEffect(() => {
     if (!mounted) return;
 
-    if (!user) {
-      router.push('/');
-      return;
-    }
+    if (!user) return;
 
     fetchStatuses();
-  }, [user, mounted, router]);
+  }, [user, mounted]);
 
   // Show minimal page during SSR
   if (!mounted) {
@@ -56,7 +51,8 @@ export default function ConnectionsPage() {
   if (!user) {
     return (
       <div className="container mx-auto px-4 py-8">
-        <div className="text-text-2 text-center">Redirecting...</div>
+        <h1 className="text-2xl font-bold text-text mb-4">Auction House Connections</h1>
+        <p className="text-text-2">Please sign in to manage your auction house connections.</p>
       </div>
     );
   }

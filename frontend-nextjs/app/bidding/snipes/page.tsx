@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { biddingAPI } from '@/lib/api/bidding';
 import type { GixenSnipe } from '@/lib/types/bidding';
+import { statusColor } from '@/lib/formatters';
 
 const STATUS_TABS = [
   { value: '', label: 'All' },
@@ -56,20 +57,6 @@ export default function SnipesPage() {
     } finally {
       setCancellingId(null);
     }
-  };
-
-  const statusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'bg-yellow-500/20 text-yellow-400',
-      submitted: 'bg-blue-500/20 text-blue-400',
-      active: 'bg-cyan-500/20 text-cyan-400',
-      won: 'bg-green-500/20 text-green-400',
-      lost: 'bg-red-500/20 text-red-400',
-      error: 'bg-red-500/20 text-red-400',
-      cancelled: 'bg-gray-500/20 text-gray-400',
-      expired: 'bg-gray-500/20 text-gray-400',
-    };
-    return colors[status] || 'bg-gray-500/20 text-gray-400';
   };
 
   const canCancel = (status: string) => ['pending', 'submitted', 'active'].includes(status);

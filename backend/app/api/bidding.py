@@ -427,21 +427,27 @@ async def list_snipes(
     result = await db.execute(query)
     snipes = result.scalars().all()
 
-    # Enrich with item and rule info
+    # Bulk-fetch related items and rules to avoid N+1 queries
+    item_ids = {s.item_id for s in snipes}
+    rule_ids = {s.rule_id for s in snipes if s.rule_id}
+
+    items_map = {}
+    if item_ids:
+        items_result = await db.execute(
+            select(AuctionItem).where(AuctionItem.id.in_(item_ids))
+        )
+        items_map = {item.id: item for item in items_result.scalars().all()}
+
+    rules_map = {}
+    if rule_ids:
+        rules_result = await db.execute(
+            select(BiddingRule.id, BiddingRule.name).where(BiddingRule.id.in_(rule_ids))
+        )
+        rules_map = {row.id: row.name for row in rules_result.all()}
+
     responses = []
     for snipe in snipes:
-        item_result = await db.execute(
-            select(AuctionItem).where(AuctionItem.id == snipe.item_id)
-        )
-        item = item_result.scalar_one_or_none()
-
-        rule_name = None
-        if snipe.rule_id:
-            rule_result = await db.execute(
-                select(BiddingRule.name).where(BiddingRule.id == snipe.rule_id)
-            )
-            rule_name = rule_result.scalar_one_or_none()
-
+        item = items_map.get(snipe.item_id)
         responses.append(SnipeResponse(
             id=snipe.id,
             user_id=snipe.user_id,
@@ -462,7 +468,7 @@ async def list_snipes(
             item_title=item.title if item else None,
             item_image_url=item.image_url if item else None,
             item_end_time=item.end_time if item else None,
-            rule_name=rule_name,
+            rule_name=rules_map.get(snipe.rule_id),
         ))
 
     return responses
@@ -586,18 +592,17 @@ async def get_snipe_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get snipe statistics for the current user."""
-    base = select(func.count(GixenSnipe.id)).where(GixenSnipe.user_id == user.id)
+    # Single GROUP BY query for all status counts
+    counts_result = await db.execute(
+        select(GixenSnipe.status, func.count(GixenSnipe.id))
+        .where(GixenSnipe.user_id == user.id)
+        .group_by(GixenSnipe.status)
+    )
+    counts = {row[0]: row[1] for row in counts_result.all()}
 
-    total = (await db.execute(base)).scalar() or 0
-    pending = (await db.execute(base.where(GixenSnipe.status == "pending"))).scalar() or 0
-    submitted = (await db.execute(base.where(GixenSnipe.status == "submitted"))).scalar() or 0
-    active = (await db.execute(base.where(GixenSnipe.status == "active"))).scalar() or 0
-    won = (await db.execute(base.where(GixenSnipe.status == "won"))).scalar() or 0
-    lost = (await db.execute(base.where(GixenSnipe.status == "lost"))).scalar() or 0
-    error = (await db.execute(base.where(GixenSnipe.status == "error"))).scalar() or 0
-    expired = (await db.execute(base.where(GixenSnipe.status == "expired"))).scalar() or 0
-    cancelled = (await db.execute(base.where(GixenSnipe.status == "cancelled"))).scalar() or 0
-
+    total = sum(counts.values())
+    won = counts.get("won", 0)
+    lost = counts.get("lost", 0)
     completed = won + lost
     win_rate = (won / completed * 100) if completed > 0 else None
 
@@ -613,14 +618,14 @@ async def get_snipe_stats(
 
     return SnipeStats(
         total=total,
-        pending=pending,
-        submitted=submitted,
-        active=active,
+        pending=counts.get("pending", 0),
+        submitted=counts.get("submitted", 0),
+        active=counts.get("active", 0),
         won=won,
         lost=lost,
-        error=error,
-        expired=expired,
-        cancelled=cancelled,
+        error=counts.get("error", 0),
+        expired=counts.get("expired", 0),
+        cancelled=counts.get("cancelled", 0),
         win_rate=win_rate,
         total_spent=total_spent,
     )

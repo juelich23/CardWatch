@@ -2,6 +2,7 @@
 
 import { useQuery } from '@apollo/client/react';
 import { GET_PRICE_HISTORY } from '@/lib/graphql/queries';
+import { formatCurrency } from '@/lib/formatters';
 
 interface PriceSnapshot {
   snapshotDate: string;
@@ -20,15 +21,6 @@ export function PriceHistoryChart({ itemId, days = 14 }: PriceHistoryChartProps)
     variables: { itemId, days },
     fetchPolicy: 'cache-first',
   });
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);

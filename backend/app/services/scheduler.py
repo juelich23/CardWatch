@@ -20,8 +20,8 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, JobExecution
 
 logger = logging.getLogger(__name__)
 
-# Global scraper lock - only one scraper can run at a time
-_scraper_lock = asyncio.Lock()
+# Global scraper semaphore - allow up to 2 concurrent scrapers
+_scraper_lock = asyncio.Semaphore(2)
 
 # Circuit breaker state
 _circuit_breaker = {

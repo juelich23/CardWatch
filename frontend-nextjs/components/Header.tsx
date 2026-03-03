@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useAuth } from '@/lib/providers/AuthProvider';
 import { useAISearch } from '@/lib/providers/AISearchProvider';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { Search, Sparkles, Menu } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -115,7 +116,7 @@ export function Header() {
               onClick={openAISearch}
               className="ml-2 px-3 py-1.5 text-sm font-medium text-accent bg-accent/10 border border-accent/30 rounded-md hover:bg-accent/20 transition-colors flex items-center gap-1.5"
             >
-              <SparklesIcon />
+              <Sparkles className="w-4 h-4" />
               AI Search
             </button>
 
@@ -161,7 +162,7 @@ export function Header() {
               className="p-2 text-muted hover:text-text transition-colors"
               aria-label="Open command palette"
             >
-              <SearchIcon />
+              <Search className="w-5 h-5" />
             </button>
 
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
@@ -170,7 +171,7 @@ export function Header() {
                   className="p-2 text-text-2 hover:text-text transition-colors"
                   aria-label="Open menu"
                 >
-                  <MenuIcon />
+                  <Menu className="w-6 h-6" />
                 </button>
               </SheetTrigger>
               <SheetContent side="right" className="w-[280px] bg-panel border-border">
@@ -238,7 +239,7 @@ export function Header() {
                     }}
                     className="px-4 py-3 rounded-lg text-base font-medium text-accent bg-accent/10 transition-colors flex items-center gap-2"
                   >
-                    <SparklesIcon />
+                    <Sparkles className="w-4 h-4" />
                     <span>AI Search</span>
                   </button>
                   <button
@@ -264,29 +265,5 @@ export function Header() {
         initialMode={authMode}
       />
     </>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
-  );
-}
-
-function SparklesIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-    </svg>
   );
 }

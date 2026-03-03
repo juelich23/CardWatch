@@ -51,7 +51,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Start with null to avoid hydration mismatch, then load from cache
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false); // Don't block rendering
-  const [initialized, setInitialized] = useState(false);
   const initRef = useRef(false);
 
   useEffect(() => {
@@ -80,7 +79,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setCachedUser(null);
       }
-      setInitialized(true);
     };
 
     initAuth();

@@ -19,6 +19,8 @@ import { GET_AUCTION_ITEMS } from '@/lib/graphql/queries';
 import { useAuth } from '@/lib/providers/AuthProvider';
 import type { AuctionItem } from '@/lib/types';
 import type { SnipeStats, GixenSnipe } from '@/lib/types/bidding';
+import { formatCurrency, formatTimeRemaining, isEndingSoon, statusColor } from '@/lib/formatters';
+import { Clock } from 'lucide-react';
 
 const PAGE_SIZE = 24;
 
@@ -159,36 +161,6 @@ export default function BiddingDashboard() {
     setBidOffset(6);
     setSnipeError(null);
     setSnipeSuccess(null);
-  };
-
-  const formatCurrency = (amount?: number) => {
-    if (amount === undefined || amount === null) return 'N/A';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
-
-  const formatTimeRemaining = (endTime?: string) => {
-    if (!endTime) return 'Unknown';
-    const utcEnd = endTime.includes('Z') || endTime.includes('+') ? endTime : endTime + 'Z';
-    const diff = new Date(utcEnd).getTime() - Date.now();
-    if (diff < 0) return 'Ended';
-    const d = Math.floor(diff / 86400000);
-    const h = Math.floor((diff % 86400000) / 3600000);
-    const m = Math.floor((diff % 3600000) / 60000);
-    if (d > 0) return `${d}d ${h}h`;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  };
-
-  const isEndingSoon = (endTime?: string) => {
-    if (!endTime) return false;
-    const utcEnd = endTime.includes('Z') || endTime.includes('+') ? endTime : endTime + 'Z';
-    const diff = new Date(utcEnd).getTime() - Date.now();
-    return diff > 0 && diff < 86400000;
   };
 
   if (!user) {
@@ -463,7 +435,7 @@ function EbayItemCard({
         {isEndingSoon(item.endTime) && (
           <div className="absolute top-1.5 left-1.5 z-10">
             <div className="bg-red-500/90 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 animate-pulse">
-              <ClockIcon className="w-2.5 h-2.5" />
+              <Clock className="w-2.5 h-2.5" />
               Soon
             </div>
           </div>
@@ -544,24 +516,3 @@ function EbayItemCard({
   );
 }
 
-function statusColor(status: string) {
-  const colors: Record<string, string> = {
-    pending: 'bg-yellow-500/20 text-yellow-400',
-    submitted: 'bg-blue-500/20 text-blue-400',
-    active: 'bg-cyan-500/20 text-cyan-400',
-    won: 'bg-green-500/20 text-green-400',
-    lost: 'bg-red-500/20 text-red-400',
-    error: 'bg-red-500/20 text-red-400',
-    cancelled: 'bg-gray-500/20 text-gray-400',
-    expired: 'bg-gray-500/20 text-gray-400',
-  };
-  return colors[status] || 'bg-gray-500/20 text-gray-400';
-}
-
-function ClockIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}

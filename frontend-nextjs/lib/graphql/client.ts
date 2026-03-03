@@ -98,11 +98,6 @@ const createApolloClient = () => {
     // Get the authentication token from local storage if it exists
     const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
 
-    // Debug: log token status for mutations
-    if (typeof window !== 'undefined' && operation.operationName) {
-      console.log(`[GraphQL] ${operation.operationName} - Token: ${token ? 'present' : 'missing'}`);
-    }
-
     // Add the authorization header
     operation.setContext(({ headers = {} }) => ({
       headers: {

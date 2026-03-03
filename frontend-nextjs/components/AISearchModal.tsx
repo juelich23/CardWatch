@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiSearchAPI, AISearchResponse, SearchSuggestion } from '@/lib/api/aiSearch';
 import { useFilters, type SortOption, type ItemTypeFilter, type SportFilterType } from '@/lib/providers/FilterProvider';
+import { Sparkles, Search } from 'lucide-react';
 
 interface AISearchModalProps {
   isOpen: boolean;
@@ -162,7 +163,7 @@ export function AISearchModal({ isOpen, onClose }: AISearchModalProps) {
         >
           {/* Header */}
           <div className="px-6 py-4 border-b border-border flex items-center gap-3">
-            <SparklesIcon className="w-5 h-5 text-accent" />
+            <Sparkles className="w-5 h-5 text-accent" />
             <span className="text-lg font-semibold text-text">AI Search</span>
             <span className="text-sm text-muted ml-2">Describe what you're looking for</span>
           </div>
@@ -187,7 +188,7 @@ export function AISearchModal({ isOpen, onClose }: AISearchModalProps) {
                 {isLoading ? (
                   <LoadingSpinner />
                 ) : (
-                  <SearchIcon className="w-4 h-4" />
+                  <Search className="w-4 h-4" />
                 )}
                 Search
               </button>
@@ -209,7 +210,7 @@ export function AISearchModal({ isOpen, onClose }: AISearchModalProps) {
                 {/* Explanation */}
                 <div className="bg-accent/10 border border-accent/30 rounded-lg p-4">
                   <div className="flex items-start gap-3">
-                    <SparklesIcon className="w-5 h-5 text-accent mt-0.5" />
+                    <Sparkles className="w-5 h-5 text-accent mt-0.5" />
                     <div>
                       <p className="text-text font-medium">{result.explanation}</p>
                       {result.search_terms && (
@@ -264,7 +265,7 @@ export function AISearchModal({ isOpen, onClose }: AISearchModalProps) {
                   onClick={() => result && applySearch(result)}
                   className="w-full py-3 bg-accent hover:bg-accent/80 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
-                  <SearchIcon className="w-4 h-4" />
+                  <Search className="w-4 h-4" />
                   Find Matching Items
                 </button>
               </div>
@@ -322,22 +323,6 @@ function FilterTag({ label, value }: { label: string; value: string }) {
       <span className="text-muted">{label}:</span>
       <span className="text-text font-medium">{value}</span>
     </span>
-  );
-}
-
-function SparklesIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-    </svg>
-  );
-}
-
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
   );
 }
 

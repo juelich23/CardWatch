@@ -21,6 +21,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
+import { Search, Filter, X, Sparkles, ChevronRight, ArrowUpDown } from 'lucide-react';
 
 const auctionHouses = [
   { value: 'alt', label: 'Alt' },
@@ -137,19 +138,19 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
           className="w-full px-4 py-3 bg-gradient-to-r from-accent/20 to-purple-500/20 border border-accent/30 rounded-xl text-left flex items-center gap-3 active:scale-[0.98] transition-transform"
         >
           <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center">
-            <SparklesIcon className="w-5 h-5 text-accent" />
+            <Sparkles className="w-5 h-5 text-accent" />
           </div>
           <div className="flex-1">
             <p className="text-sm font-medium text-text">AI Search</p>
             <p className="text-xs text-muted">Describe what you're looking for...</p>
           </div>
-          <ChevronRightIcon className="w-5 h-5 text-muted" />
+          <ChevronRight className="w-5 h-5 text-muted" />
         </button>
 
         {/* Row 2: Search input with filter button */}
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
             <Input
               type="text"
               placeholder="Search items..."
@@ -170,7 +171,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
                 }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
               >
-                <XIcon className="w-4 h-4" />
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -178,7 +179,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
           <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon" className="relative h-10 w-10 shrink-0">
-                <FilterIcon />
+                <Filter className="w-4 h-4" />
                 {(minPrice || maxPrice || itemType) && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-accent text-[10px] text-white rounded-full flex items-center justify-center">
                     {[minPrice, maxPrice, itemType].filter(Boolean).length}
@@ -337,7 +338,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
           <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
             <SelectTrigger className="flex-1 bg-panel border-border text-text h-10">
               <div className="flex items-center gap-2">
-                <SortIcon className="w-4 h-4 text-muted" />
+                <ArrowUpDown className="w-4 h-4 text-muted" />
                 <SelectValue />
               </div>
             </SelectTrigger>
@@ -358,7 +359,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
               onClick={clearFilters}
               className="h-10 px-3 shrink-0 text-red-400 border-red-400/30 hover:bg-red-400/10 hover:text-red-300"
             >
-              <XIcon className="w-4 h-4 mr-1" />
+              <X className="w-4 h-4 mr-1" />
               Clear All
             </Button>
           )}
@@ -368,7 +369,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
       {/* Desktop: Full filter bar */}
       <div className="hidden md:flex items-center gap-3 flex-wrap">
         <div className="relative">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
           <Input
             type="text"
             placeholder="Search items..."
@@ -459,7 +460,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
             onClick={clearFilters}
             className="text-red-400 border-red-400/30 hover:bg-red-400/10 hover:text-red-300"
           >
-            <XIcon className="w-4 h-4 mr-1" />
+            <X className="w-4 h-4 mr-1" />
             Clear All
           </Button>
         )}
@@ -489,7 +490,7 @@ export function FilterBar({ totalFiltered, totalItems, isLoadingMore, loadingPro
                 >
                   {filter.label}
                   <span className="ml-1 hover:bg-accent/30 rounded-full p-0.5">
-                    <XIcon className="w-3 h-3" />
+                    <X className="w-3 h-3" />
                   </span>
                 </Badge>
               </motion.div>
@@ -524,50 +525,3 @@ function LoadingSpinner({ className }: { className?: string }) {
   );
 }
 
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
-  );
-}
-
-function FilterIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-    </svg>
-  );
-}
-
-function XIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
-
-function SparklesIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
-
-function SortIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
-    </svg>
-  );
-}

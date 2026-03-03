@@ -9,59 +9,13 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool
 from sqlalchemy import select, text
 
-from app.config import get_settings
+from app.database import async_session_maker
 from app.models import Auction, AuctionItem
 from app.services.scheduler import with_scraper_lock
 
 logger = logging.getLogger(__name__)
-
-# Lazy-loaded engine and session factory
-_engine = None
-_async_session = None
-
-
-def get_db_session():
-    """Get database session factory."""
-    global _engine, _async_session
-    if _engine is None:
-        settings = get_settings()
-
-        # Transform database URL for asyncpg driver (same as database.py)
-        database_url = settings.database_url
-        is_postgres = database_url.startswith("postgresql") or database_url.startswith("postgres://")
-
-        if is_postgres:
-            # Use psycopg (psycopg3) instead of asyncpg for better pgbouncer compatibility
-            if database_url.startswith("postgres://"):
-                database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-            elif "+asyncpg" in database_url:
-                database_url = database_url.replace("+asyncpg", "+psycopg")
-            elif database_url.startswith("postgresql://") and "+psycopg" not in database_url:
-                database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-
-        engine_kwargs = {
-            "echo": False,
-        }
-
-        if is_postgres:
-            # Use NullPool - let pgbouncer handle connection pooling
-            # psycopg3 handles pgbouncer transaction mode natively
-            engine_kwargs.update({
-                "poolclass": NullPool,
-                "connect_args": {
-                    "prepare_threshold": None,
-                    "connect_timeout": 30,  # 30 second connection timeout
-                },
-            })
-            print(f"[SCRAPER_JOBS CONFIG v4] Using psycopg driver with NullPool and 30s timeout")
-
-        _engine = create_async_engine(database_url, **engine_kwargs)
-        _async_session = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
-    return _async_session
 
 
 @with_scraper_lock
@@ -92,7 +46,7 @@ async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
             return 0.0
         try:
             return float(str(price_str).replace(',', ''))
-        except:
+        except Exception:
             return 0.0
 
     all_items = {}
@@ -135,7 +89,7 @@ async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
                     end_time_str = item.get("EffectiveDate", "")
                     try:
                         end_time = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
-                    except:
+                    except Exception:
                         end_time = None
 
                     if end_time and end_time < datetime.utcnow():
@@ -171,8 +125,7 @@ async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
         logger.info(f"Fetched {len(items_list)} CardHobby items")
 
         # Save to database
-        async_session = get_db_session()
-        async with async_session() as db:
+        async with async_session_maker() as db:
             # Get or create auction record
             result = await db.execute(
                 select(Auction).where(
@@ -269,8 +222,7 @@ async def scrape_goldin(max_items: int = 1000):
     # Import here to avoid circular imports
     from app.scrapers import GoldinHTTPScraper
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             scraper = GoldinHTTPScraper(db)
             items = await scraper.scrape(db, max_items=max_items)
@@ -287,8 +239,7 @@ async def scrape_fanatics(max_items: int = 1000):
     logger.info("Starting Fanatics scrape")
     from app.scrapers import FanaticsScraper
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             scraper = FanaticsScraper()
             items = await scraper.scrape(db, max_items=max_items)
@@ -305,11 +256,10 @@ async def scrape_heritage(max_items: int = 1000):
     logger.info("Starting Heritage scrape")
     from app.scrapers import HeritageScraper
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
-            scraper = HeritageScraper(db)
-            items = await scraper.scrape_auction_items(max_items=max_items)
+            scraper = HeritageScraper()
+            items = await scraper.scrape(db, max_items=max_items)
             await db.commit()
             logger.info(f"Heritage scrape complete: {len(items)} items")
             return {"items": len(items)}
@@ -324,8 +274,7 @@ async def scrape_pristine():
     logger.info("Starting Pristine scrape (by category)")
     from app.scrapers import PristineScraper
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             scraper = PristineScraper()
             # Scrape all categories with up to 500 pages each (~30k items per category max)
@@ -347,16 +296,15 @@ async def cleanup_ended_auctions(days_old: int = 7):
     """
     logger.info(f"Starting cleanup of auctions ended more than {days_old} days ago")
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             result = await db.execute(
                 text("""
                     DELETE FROM auction_items
                     WHERE status = 'Ended'
-                    AND end_time < datetime('now', :days_ago)
+                    AND end_time < NOW() - :days_old * INTERVAL '1 day'
                 """),
-                {"days_ago": f"-{days_old} days"}
+                {"days_old": days_old}
             )
 
             deleted = result.rowcount
@@ -389,8 +337,7 @@ async def scrape_alt(max_items: int = 10000):
     logger.info(f"Starting Alt.xyz scrape (max_items={max_items})")
     start_time = datetime.utcnow()
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             scraper = AltScraper()
             items = await scraper.scrape(db, api_key=api_key, max_items=max_items)
@@ -413,8 +360,7 @@ async def scrape_ebay(max_items: int = 5000):
     logger.info(f"Starting eBay scrape (max_items={max_items})")
     from app.scrapers.ebay import EbayScraper
 
-    async_session = get_db_session()
-    async with async_session() as db:
+    async with async_session_maker() as db:
         try:
             scraper = EbayScraper()
             items = await scraper.scrape(db, max_items=max_items)

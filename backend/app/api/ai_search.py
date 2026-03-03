@@ -53,7 +53,7 @@ async def ai_search(request: AISearchRequest):
 
     try:
         service = AISearchService()
-        result = service.interpret_query(request.query)
+        result = await service.interpret_query(request.query)
 
         # Map the result to our response model
         raw_filters = result.get('filters', {})

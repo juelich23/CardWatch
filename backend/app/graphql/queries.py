@@ -278,7 +278,7 @@ class Query:
             # No cached value - call LLM and save result
             try:
                 estimator = MarketValueEstimator()
-                estimate_dict = estimator.estimate_value(
+                estimate_dict = await estimator.estimate_value(
                     title=item.title,
                     grading_company=item.grading_company,
                     grade=item.grade,

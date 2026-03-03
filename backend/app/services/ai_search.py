@@ -17,9 +17,9 @@ class AISearchService:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
 
-    def interpret_query(self, query: str, available_items_summary: Optional[str] = None) -> dict:
+    async def interpret_query(self, query: str, available_items_summary: Optional[str] = None) -> dict:
         """
         Interpret a natural language search query and extract search criteria.
 
@@ -122,7 +122,7 @@ CRITICAL RULES for search_terms:
 13. Always provide a friendly explanation"""
 
         try:
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model="claude-3-haiku-20240307",
                 max_tokens=1024,
                 messages=[

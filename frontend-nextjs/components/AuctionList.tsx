@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import dynamic from 'next/dynamic';
+import { Bookmark, Folder, X } from 'lucide-react';
 
 // Dynamically import SaveSearchModal - only loaded when save button is clicked
 const SaveSearchModal = dynamic(
@@ -227,19 +228,13 @@ export function AuctionList() {
   // Fetch saved searches when user changes
   useEffect(() => {
     if (user) {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        fetchSavedSearches();
-      }
+      fetchSavedSearches();
     } else {
       setSavedSearches([]);
     }
   }, [user]);
 
   const fetchSavedSearches = async () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return;
-
     try {
       setLoadingSavedSearches(true);
       const searches = await savedSearchesAPI.list();
@@ -334,7 +329,7 @@ export function AuctionList() {
                 onClick={() => setShowSaveModal(true)}
                 className="h-9"
               >
-                <BookmarkIcon className="w-4 h-4 sm:mr-1" />
+                <Bookmark className="w-4 h-4 sm:mr-1" />
                 <span className="hidden sm:inline">Save</span>
               </Button>
             )}
@@ -343,7 +338,7 @@ export function AuctionList() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-9">
-                    <FolderIcon className="w-4 h-4 sm:mr-1" />
+                    <Folder className="w-4 h-4 sm:mr-1" />
                     <span className="hidden sm:inline">Saved</span>
                     <span className="ml-1 bg-accent/20 text-accent text-xs px-1.5 rounded-full">
                       {savedSearches.length}
@@ -362,7 +357,7 @@ export function AuctionList() {
                         onClick={(e) => handleDeleteSearch(search.id, e)}
                         className="text-muted hover:text-red-400 ml-2 p-1"
                       >
-                        <XIcon className="w-3 h-3" />
+                        <X className="w-3 h-3" />
                       </button>
                     </DropdownMenuItem>
                   ))}
@@ -448,27 +443,3 @@ function LoadingSpinner() {
   );
 }
 
-// Icons
-function BookmarkIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-    </svg>
-  );
-}
-
-function FolderIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-    </svg>
-  );
-}
-
-function XIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
-}
