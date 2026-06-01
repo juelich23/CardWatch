@@ -2,10 +2,10 @@ import asyncio
 import httpx
 import re
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.scrapers.base import BaseScraper, retry_async, HealthCheckResult
 from app.models import Auction, AuctionItem
 from app.utils.sport_detection import detect_sport_from_item
@@ -755,36 +755,77 @@ class GoldinHTTPScraper(BaseScraper):
             await db.commit()
             print(f"✅ Created/updated {len(auction_map)} auctions")
 
-            # Associate items with their auctions and save
-            print(f"\n💾 Saving {len(items)} items to database...")
+            # Associate items with their auctions
             for item in items:
                 goldin_auction_id = item.get('raw_data', {}).get('auction_id')
                 if goldin_auction_id and goldin_auction_id in auction_map:
                     item['auction_id'] = auction_map[goldin_auction_id]
 
-                # Save item
+            # Batch upsert: fetch all existing rows up front (avoids N+1 SELECTs)
+            print(f"\n💾 Saving {len(items)} items to database...")
+
+            # De-duplicate items by external_id (keep last occurrence), since the
+            # source can return the same lot more than once across pages.
+            items_by_external_id = {item["external_id"]: item for item in items}
+            unique_items = list(items_by_external_id.values())
+            external_ids = list(items_by_external_id.keys())
+
+            # Fetch existing rows in chunks to keep IN() clauses bounded.
+            existing_items = {}
+            chunk_size = 1000
+            for chunk_start in range(0, len(external_ids), chunk_size):
+                id_chunk = external_ids[chunk_start:chunk_start + chunk_size]
                 result = await db.execute(
                     select(AuctionItem).where(
                         AuctionItem.auction_house == "goldin",
-                        AuctionItem.external_id == item["external_id"]
+                        AuctionItem.external_id.in_(id_chunk)
                     )
                 )
-                existing_item = result.scalar_one_or_none()
+                for existing in result.scalars().all():
+                    existing_items[existing.external_id] = existing
+
+            print(f"   ... {len(unique_items)} unique items ({len(existing_items)} existing)")
+
+            new_count = 0
+            update_count = 0
+            for item in unique_items:
+                existing_item = existing_items.get(item["external_id"])
 
                 if existing_item:
                     for key, value in item.items():
                         if key not in ['external_id', 'auction_house']:
                             setattr(existing_item, key, value)
                     existing_item.updated_at = datetime.utcnow()
+                    update_count += 1
                 else:
                     new_item = AuctionItem(
                         auction_house="goldin",
                         **item
                     )
                     db.add(new_item)
+                    new_count += 1
 
             await db.commit()
-            print(f"✅ Saved {len(items)} items to database")
+            print(f"✅ Saved {len(unique_items)} items to database ({new_count} new, {update_count} updated)")
+
+            # Time-based stale marking: the Goldin scraper is capped (max_items)
+            # and does NOT pull the complete live set, so we must NOT mark
+            # "not seen this run" items as ended (that would wrongly end live
+            # lots we simply didn't fetch). Instead, only mark items whose
+            # end_time has already passed.
+            now = datetime.utcnow()  # naive UTC to match how end_time is stored
+            ended_result = await db.execute(
+                text(
+                    "UPDATE auction_items SET status = 'Ended' "
+                    "WHERE auction_house = 'goldin' "
+                    "AND end_time < :now "
+                    "AND status != 'Ended'"
+                ),
+                {"now": now},
+            )
+            await db.commit()
+            ended_count = ended_result.rowcount or 0
+            print(f"⏰ Marked {ended_count} past-end-time items as Ended (time-based)")
 
             # Count items with grading data
             graded_items = [item for item in items if item.get('grading_company')]

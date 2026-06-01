@@ -15,7 +15,7 @@ from typing import Optional, List, Dict
 
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models import Auction, AuctionItem
 from app.utils.sport_detection import detect_sport_from_item
@@ -447,17 +447,33 @@ class EbayScraper:
             db.add(auction)
             await db.flush()
 
-        # Upsert items
+        # Batch-fetch existing items to avoid N+1 SELECTs (one query per item
+        # would mean thousands of round-trips, straining the pgbouncer pool).
+        # Chunk the IN list to keep query/param sizes reasonable.
+        external_ids = [item["external_id"] for item in items_list]
+        existing_items: Dict[str, AuctionItem] = {}
+        chunk_size = 500
+        for chunk_start in range(0, len(external_ids), chunk_size):
+            id_chunk = external_ids[chunk_start:chunk_start + chunk_size]
+            result = await db.execute(
+                select(AuctionItem).where(
+                    AuctionItem.auction_house == "ebay",
+                    AuctionItem.external_id.in_(id_chunk),
+                )
+            )
+            for row in result.scalars().all():
+                existing_items[row.external_id] = row
+
+        logger.info(
+            f"  Upserting {len(items_list)} items ({len(existing_items)} existing)"
+        )
+
+        # Upsert items: update existing in-place, insert new. Behavior matches
+        # the previous per-item loop exactly, just batched with a single commit.
         saved = 0
         for item_data in items_list:
             try:
-                result = await db.execute(
-                    select(AuctionItem).where(
-                        AuctionItem.auction_house == "ebay",
-                        AuctionItem.external_id == item_data["external_id"],
-                    )
-                )
-                existing = result.scalar_one_or_none()
+                existing = existing_items.get(item_data["external_id"])
 
                 if existing:
                     for key, value in item_data.items():
@@ -477,6 +493,28 @@ class EbayScraper:
 
         await db.commit()
         logger.info(f"  Saved {saved} eBay items to database")
+
+        # Stale-ended marking (SAFE / time-based ONLY).
+        # NOTE: eBay deliberately does NOT use "not seen this run" marking. The
+        # scraper only pulls a partial set (capped by max_items and a fixed list
+        # of search queries), so items absent from this run may still be live --
+        # we simply didn't fetch them. Marking those ended would be wrong.
+        # Instead we only end auctions whose end_time is already in the past,
+        # which is always correct regardless of whether we saw them this run.
+        now = datetime.utcnow()
+        ended_result = await db.execute(
+            update(AuctionItem)
+            .where(
+                AuctionItem.auction_house == "ebay",
+                AuctionItem.end_time < now,
+                AuctionItem.status != "Ended",
+            )
+            .values(status="Ended", updated_at=now)
+        )
+        await db.commit()
+        ended_count = ended_result.rowcount or 0
+        logger.info(f"  Marked {ended_count} eBay items as Ended (past end_time)")
+
         return items_list
 
     async def health_check(self) -> dict:

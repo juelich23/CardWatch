@@ -18,6 +18,19 @@ from app.services.scheduler import with_scraper_lock
 logger = logging.getLogger(__name__)
 
 
+def _warn_if_empty(name: str, count: int):
+    """Log a warning when a scrape completes with 0 items.
+
+    A zero-item result almost always means the source site changed and the
+    scraper silently broke, so surface it loudly instead of as a success.
+    """
+    if count == 0:
+        logger.warning(
+            f"{name} scrape completed with 0 items - source may have changed "
+            f"or scraper silently broke"
+        )
+
+
 @with_scraper_lock
 async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
     """
@@ -208,6 +221,7 @@ async def scrape_cardhobby(max_items: int = 2000, min_price: float = 100.0):
             duration = (datetime.utcnow() - start_time).total_seconds()
             logger.info(f"CardHobby scrape complete: {inserted} new, {updated} updated in {duration:.1f}s")
 
+            _warn_if_empty("CardHobby", inserted + updated)
             return {"inserted": inserted, "updated": updated, "duration": duration}
 
     except Exception as e:
@@ -227,6 +241,7 @@ async def scrape_goldin(max_items: int = 1000):
             scraper = GoldinHTTPScraper(db)
             items = await scraper.scrape(db, max_items=max_items)
             logger.info(f"Goldin scrape complete: {len(items)} items")
+            _warn_if_empty("Goldin", len(items))
             return {"items": len(items)}
         except Exception as e:
             logger.error(f"Goldin scrape failed: {e}")
@@ -234,8 +249,8 @@ async def scrape_goldin(max_items: int = 1000):
 
 
 @with_scraper_lock
-async def scrape_fanatics(max_items: int = 1000):
-    """Scrape Fanatics auctions."""
+async def scrape_fanatics(max_items: int = 200000):
+    """Scrape Fanatics auctions (all live weekly auction lots via Algolia)."""
     logger.info("Starting Fanatics scrape")
     from app.scrapers import FanaticsScraper
 
@@ -244,6 +259,7 @@ async def scrape_fanatics(max_items: int = 1000):
             scraper = FanaticsScraper()
             items = await scraper.scrape(db, max_items=max_items)
             logger.info(f"Fanatics scrape complete: {len(items)} items")
+            _warn_if_empty("Fanatics", len(items))
             return {"items": len(items)}
         except Exception as e:
             logger.error(f"Fanatics scrape failed: {e}")
@@ -262,6 +278,7 @@ async def scrape_heritage(max_items: int = 1000):
             items = await scraper.scrape(db, max_items=max_items)
             await db.commit()
             logger.info(f"Heritage scrape complete: {len(items)} items")
+            _warn_if_empty("Heritage", len(items))
             return {"items": len(items)}
         except Exception as e:
             logger.error(f"Heritage scrape failed: {e}")
@@ -280,6 +297,7 @@ async def scrape_pristine():
             # Scrape all categories with up to 500 pages each (~30k items per category max)
             items = await scraper.scrape(db, categories=None, max_pages_per_category=500)
             logger.info(f"Pristine scrape complete: {len(items)} items")
+            _warn_if_empty("Pristine", len(items))
             return {"items": len(items)}
         except Exception as e:
             logger.error(f"Pristine scrape failed: {e}")
@@ -365,28 +383,11 @@ async def scrape_ebay(max_items: int = 10000):
             scraper = EbayScraper()
             items = await scraper.scrape(db, max_items=max_items)
             logger.info(f"eBay scrape complete: {len(items)} items")
+            _warn_if_empty("eBay", len(items))
             return {"items": len(items)}
         except Exception as e:
             logger.error(f"eBay scrape failed: {e}")
             raise
-
-
-async def run_bidding_rules_job():
-    """Scheduled job: run bidding rule matching for all users."""
-    from app.services.bidding_engine import run_bidding_rules
-    return await run_bidding_rules()
-
-
-async def submit_pending_snipes_job():
-    """Scheduled job: submit pending snipes to Gixen."""
-    from app.services.bidding_engine import submit_pending_snipes
-    return await submit_pending_snipes()
-
-
-async def sync_gixen_status_job():
-    """Scheduled job: sync Gixen snipe outcomes."""
-    from app.services.bidding_engine import sync_gixen_status
-    return await sync_gixen_status()
 
 
 # Job registry for easy access
@@ -431,20 +432,5 @@ SCRAPER_JOBS = {
         "func": cleanup_ended_auctions,
         "default_interval": 60 * 24,  # Daily
         "description": "Clean up old ended auctions",
-    },
-    "bidding_rules": {
-        "func": run_bidding_rules_job,
-        "default_interval": 10,  # every 10 minutes
-        "description": "Match bidding rules to eBay items",
-    },
-    "bidding_submit": {
-        "func": submit_pending_snipes_job,
-        "default_interval": 5,  # every 5 minutes
-        "description": "Submit pending snipes to Gixen",
-    },
-    "bidding_sync": {
-        "func": sync_gixen_status_job,
-        "default_interval": 15,  # every 15 minutes
-        "description": "Sync Gixen snipe outcomes",
     },
 }

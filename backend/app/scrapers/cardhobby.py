@@ -29,9 +29,6 @@ class CardHobbyScraper(BaseScraper):
         # Auth token - can be set via environment variable
         self.auth_token = os.getenv("CARDHOBBY_AUTH_TOKEN", "")
 
-        # Translation cache to avoid repeated API calls
-        self._translation_cache: Dict[str, str] = {}
-
     async def __aenter__(self):
         """Create HTTP client"""
         self.client = httpx.AsyncClient(
@@ -66,128 +63,6 @@ class CardHobbyScraper(BaseScraper):
             return float(str(price_str).replace(',', ''))
         except (ValueError, TypeError):
             return 0.0
-
-    def _contains_chinese(self, text: str) -> bool:
-        """Check if text contains Chinese characters"""
-        return bool(re.search(r'[\u4e00-\u9fff]', text))
-
-    async def _translate_to_english(self, text: str) -> str:
-        """
-        Translate Chinese text to English using Claude API.
-        Caches results to avoid repeated translations.
-        """
-        if not text or not self._contains_chinese(text):
-            return text
-
-        # Check cache first
-        if text in self._translation_cache:
-            return self._translation_cache[text]
-
-        try:
-            import anthropic
-            from app.config import get_settings
-
-            settings = get_settings()
-            if not settings.anthropic_api_key:
-                return text
-
-            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
-            message = client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=256,
-                messages=[{
-                    "role": "user",
-                    "content": f"""Translate this trading card title to English. Keep card-specific terms (player names, card brands like Panini/Topps, grades like PSA/BGS) in their original form. Output ONLY the translated title, nothing else.
-
-Title: {text}"""
-                }]
-            )
-
-            translated = message.content[0].text.strip()
-            self._translation_cache[text] = translated
-            return translated
-
-        except Exception as e:
-            print(f"   Translation error: {e}")
-            return text
-
-    async def _batch_translate(self, items: List[Dict], batch_size: int = 50) -> List[Dict]:
-        """
-        Batch translate titles for items that contain Chinese.
-        Uses a single API call per batch for efficiency.
-        """
-        items_needing_translation = [
-            (i, item) for i, item in enumerate(items)
-            if self._contains_chinese(item.get('title', ''))
-        ]
-
-        if not items_needing_translation:
-            return items
-
-        print(f"   Translating {len(items_needing_translation)} titles from Chinese to English...")
-
-        try:
-            import anthropic
-            from app.config import get_settings
-
-            settings = get_settings()
-            if not settings.anthropic_api_key:
-                print("   No Anthropic API key configured, skipping translation")
-                return items
-
-            client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
-            for i in range(0, len(items_needing_translation), batch_size):
-                batch = items_needing_translation[i:i + batch_size]
-
-                # Build a single prompt with all titles numbered
-                titles_text = "\n".join([
-                    f"{j+1}. {item.get('title', '')}"
-                    for j, (idx, item) in enumerate(batch)
-                ])
-
-                message = client.messages.create(
-                    model="claude-3-haiku-20240307",
-                    max_tokens=4096,
-                    messages=[{
-                        "role": "user",
-                        "content": f"""Translate these trading card titles from Chinese to English. Keep card-specific terms (player names, card brands like Panini/Topps, grades like PSA/BGS, numbering like /25 or 1/1) in their original form.
-
-Output ONLY the translations, one per line, with the same numbering (1., 2., etc.):
-
-{titles_text}"""
-                    }]
-                )
-
-                # Parse response - each line should be "N. translation"
-                response_lines = message.content[0].text.strip().split('\n')
-
-                for j, (idx, item) in enumerate(batch):
-                    original_title = item.get('title', '')
-
-                    # Try to find the matching translation
-                    translated = original_title  # Default to original
-                    for line in response_lines:
-                        if line.startswith(f"{j+1}."):
-                            translated = line[len(f"{j+1}."):].strip()
-                            break
-
-                    items[idx]['title'] = translated
-                    if items[idx].get('raw_data'):
-                        items[idx]['raw_data']['original_title'] = original_title
-
-                print(f"   Translated batch {i//batch_size + 1}/{(len(items_needing_translation) + batch_size - 1)//batch_size}")
-
-                # Small delay between batches to avoid rate limiting
-                if i + batch_size < len(items_needing_translation):
-                    await asyncio.sleep(1.0)
-
-        except Exception as e:
-            print(f"   Translation error: {e}")
-
-        print(f"   Translation complete")
-        return items
 
     async def health_check(self) -> HealthCheckResult:
         """Check if CardHobby API is accessible"""
@@ -376,10 +251,6 @@ Output ONLY the translations, one per line, with the same numbering (1., 2., etc
             traceback.print_exc()
 
         print(f"\n📦 Found {len(all_items)} items over ${min_price}")
-
-        # Translate Chinese titles to English
-        if all_items:
-            all_items = await self._batch_translate(all_items)
 
         return all_items
 

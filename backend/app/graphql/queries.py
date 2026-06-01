@@ -14,12 +14,10 @@ from app.graphql.types import (
     AuctionItemType,
     AuctionType,
     PaginatedAuctionItems,
-    MarketValueEstimate,
     PriceSnapshotType,
     auction_item_from_model,
     auction_from_model,
 )
-from app.services.market_value import MarketValueEstimator
 from app.services.price_snapshot_service import PriceSnapshotService
 
 
@@ -238,74 +236,6 @@ class Query:
             auctions = result.scalars().all()
 
             return [auction_from_model(auction) for auction in auctions]
-        finally:
-            await db.close()
-
-    @strawberry.field
-    async def market_value_estimate(
-        self,
-        item_id: int,
-    ) -> MarketValueEstimate:
-        """
-        Get market value estimate for an auction item.
-        Returns cached value from DB if available, otherwise calls LLM and caches result.
-        """
-        from datetime import datetime
-
-        db = await get_db_session()
-        try:
-            # Fetch the item
-            query = select(AuctionItemModel).where(AuctionItemModel.id == item_id)
-            result = await db.execute(query)
-            item = result.scalar_one_or_none()
-
-            if not item:
-                return MarketValueEstimate(
-                    confidence="low",
-                    notes="Item not found",
-                )
-
-            # Check if we already have a cached market value estimate in the database
-            if item.market_value_avg is not None:
-                return MarketValueEstimate(
-                    estimated_low=item.market_value_low,
-                    estimated_high=item.market_value_high,
-                    estimated_average=item.market_value_avg,
-                    confidence=item.market_value_confidence or "medium",
-                    notes=item.market_value_notes or "",
-                )
-
-            # No cached value - call LLM and save result
-            try:
-                estimator = MarketValueEstimator()
-                estimate_dict = await estimator.estimate_value(
-                    title=item.title,
-                    grading_company=item.grading_company,
-                    grade=item.grade,
-                    current_bid=item.current_bid,
-                )
-
-                # Save to database for future requests
-                item.market_value_low = estimate_dict.get("estimated_low")
-                item.market_value_high = estimate_dict.get("estimated_high")
-                item.market_value_avg = estimate_dict.get("estimated_average")
-                item.market_value_confidence = estimate_dict.get("confidence", "low")
-                item.market_value_notes = estimate_dict.get("notes", "")
-                item.market_value_updated_at = datetime.utcnow()
-                await db.commit()
-
-                return MarketValueEstimate(
-                    estimated_low=estimate_dict.get("estimated_low"),
-                    estimated_high=estimate_dict.get("estimated_high"),
-                    estimated_average=estimate_dict.get("estimated_average"),
-                    confidence=estimate_dict.get("confidence", "low"),
-                    notes=estimate_dict.get("notes", ""),
-                )
-            except Exception as e:
-                return MarketValueEstimate(
-                    confidence="low",
-                    notes=f"Error estimating value: {str(e)}",
-                )
         finally:
             await db.close()
 

@@ -90,16 +90,6 @@ class PaginatedAuctionItems:
 
 
 @strawberry.type
-class MarketValueEstimate:
-    """Market value estimate from Claude API"""
-    estimated_low: Optional[float] = None
-    estimated_high: Optional[float] = None
-    estimated_average: Optional[float] = None
-    confidence: str = "low"
-    notes: str = ""
-
-
-@strawberry.type
 class GenericResponse:
     """Generic response for mutations"""
     success: bool

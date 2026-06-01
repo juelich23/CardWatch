@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from typing import Optional, List, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.database import get_db, init_db
 from app.models import Auction, AuctionItem
 from app.scrapers.base import HealthCheckResult, retry_async
@@ -155,10 +155,18 @@ class FanaticsScraper:
                         "title",
                         "subtitle",
                         "currentPrice",
+                        "currentBid",
+                        "startingBid",
                         "status",
-                        "images.primary",
+                        "images",
                         "lotNumber",
-                        "bidCount"
+                        "bidCount",
+                        "auctionEndDatetime",
+                        "auctionName",
+                        "gradingService",
+                        "grade",
+                        "serial",
+                        "category",
                     ],
                     "attributesToHighlight": [],
                     "filters": filters,
@@ -241,71 +249,90 @@ class FanaticsScraper:
             print(f"   ⚠️ Error fetching details for {listing_uuid}: {e}")
             return None
 
-    def normalize_item(self, algolia_item: dict, details: Optional[dict]) -> dict:
-        """Convert Fanatics item to our standard format"""
-        title = algolia_item.get('title', '')
+    @staticmethod
+    def _format_grade(grade) -> Optional[str]:
+        """Algolia returns grade as a number (10, 9.5) or None -> store as a clean string."""
+        if grade is None or grade == "":
+            return None
+        try:
+            f = float(grade)
+            return str(int(f)) if f.is_integer() else str(f)
+        except (TypeError, ValueError):
+            return str(grade)
+
+    def normalize_item(self, algolia_item: dict, details: Optional[dict] = None) -> dict:
+        """Convert a Fanatics Algolia hit to our standard format.
+
+        All required fields are present in the Algolia search response, so a
+        per-item GraphQL `details` fetch is no longer needed. `details` is kept
+        as an optional argument for backward compatibility and, when supplied,
+        its richer fields take precedence.
+        """
+        title = algolia_item.get('title', '') or ''
         subtitle = algolia_item.get('subtitle', '')
 
-        # Extract grading information
-        grading_url = None
-        if details and details.get('vaultItem'):
-            grading_url = details['vaultItem'].get('gradingServiceUrl')
+        # Grading: prefer Algolia's structured fields, fall back to parsing the title.
+        company_map = {'BGS': 'Beckett', 'BECKETT': 'Beckett'}
+        grading_company = algolia_item.get('gradingService')
+        if grading_company:
+            grading_company = company_map.get(grading_company.upper(), grading_company)
+        grade = self._format_grade(algolia_item.get('grade'))
+        cert_number = algolia_item.get('serial')
 
-        grading_info = self.extract_grading_info(title, grading_url)
+        if not grading_company or not grade:
+            parsed = self.extract_grading_info(title, None)
+            grading_company = grading_company or parsed['grading_company']
+            grade = grade or parsed['grade']
 
-        # Get price in dollars
-        current_price = algolia_item.get('currentPrice', 0)
-        if details and details.get('currentBid'):
-            current_price = details['currentBid'].get('amountInCents', 0) / 100
+        # Pricing. currentPrice is the effective price (= current bid, or starting
+        # bid when there are no bids yet). currentBid is 0 until the first bid.
+        current_price = algolia_item.get('currentPrice')
+        if current_price is None:
+            current_price = algolia_item.get('currentBid') or 0
+        starting_price = algolia_item.get('startingBid')
 
-        starting_price = None
-        if details and details.get('startingPrice'):
-            starting_price = details['startingPrice'].get('amountInCents', 0) / 100
-
-        # Get end time
+        # End time: Algolia gives a unix timestamp (UTC).
         end_time = None
-        if details and details.get('auction') and details['auction'].get('endsAt'):
-            end_time_str = details['auction']['endsAt']
+        ts = algolia_item.get('auctionEndDatetime')
+        if ts:
             try:
-                end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
-            except:
+                end_time = datetime.utcfromtimestamp(int(ts))
+            except (TypeError, ValueError, OSError):
+                pass
+        # Detail fetch (if ever provided) carries an explicit ISO end time.
+        if details and details.get('auction') and details['auction'].get('endsAt'):
+            try:
+                end_time = datetime.fromisoformat(details['auction']['endsAt'].replace('Z', '+00:00'))
+            except ValueError:
                 pass
 
-        # Get image URL
+        # Image URL: primary.large, falling back to secondary.large.
         image_url = None
-        if algolia_item.get('images') and algolia_item['images'].get('primary'):
-            image_url = algolia_item['images']['primary'].get('large')
-        elif details and details.get('imageSets') and len(details['imageSets']) > 0:
-            image_url = details['imageSets'][0].get('large')
+        images = algolia_item.get('images') or {}
+        if isinstance(images, dict):
+            for group in ('primary', 'secondary'):
+                g = images.get(group)
+                if isinstance(g, dict) and g.get('large'):
+                    image_url = g['large']
+                    break
 
-        # Build item URL
-        # URL format: https://www.fanaticscollect.com/{type}/{listingUuid}/{slug}
-        # Type is "weekly" or "premier" depending on marketplace
+        # Build item URL. The UUID-only URL redirects to the slugged canonical URL.
         listing_uuid = algolia_item['listingUuid']
-        marketplace = algolia_item.get('marketplace', 'WEEKLY').lower()
-        slug = details.get('slug') if details else None
-        item_url = None
-        if listing_uuid:
-            if slug:
-                item_url = f"{self.base_url}/{marketplace}/{listing_uuid}/{slug}"
-            else:
-                # Fallback: use just the UUID (will redirect to proper URL)
-                item_url = f"{self.base_url}/{marketplace}/{listing_uuid}"
+        marketplace = (algolia_item.get('marketplace') or 'WEEKLY').lower()
+        item_url = f"{self.base_url}/{marketplace}/{listing_uuid}" if listing_uuid else None
 
-        # Extract category
-        category = self.extract_category(title + ' ' + (subtitle or ''))
-
-        # Detect sport from item content
+        # Category: Algolia provides a clean sport/category; fall back to title parsing.
+        category = algolia_item.get('category') or self.extract_category(title + ' ' + (subtitle or ''))
         sport = detect_sport_from_item(title, subtitle, category).value
 
         return {
-            "external_id": algolia_item['listingUuid'],
+            "external_id": listing_uuid,
             "lot_number": algolia_item.get('lotNumber'),
-            "cert_number": grading_info['cert_number'],
+            "cert_number": cert_number,
             "sub_category": category,
-            "grading_company": grading_info['grading_company'],
-            "grade": grading_info['grade'],
-            "title": title[:500] if title else "",
+            "grading_company": grading_company,
+            "grade": grade,
+            "title": title[:500],
             "description": subtitle,
             "category": category,
             "sport": sport,
@@ -316,10 +343,7 @@ class FanaticsScraper:
             "end_time": end_time,
             "status": "Live",
             "item_url": item_url,
-            "raw_data": {
-                "algolia": algolia_item,
-                "details": details
-            }
+            "raw_data": {"algolia": algolia_item},
         }
 
     async def _fetch_category_items(self, client: httpx.AsyncClient, api_key: str, category_filter: str, category_name: str, max_per_category: int = 10000) -> list:
@@ -352,7 +376,84 @@ class FanaticsScraper:
 
         return all_hits
 
-    async def scrape(self, db: AsyncSession, max_items: int = 50000) -> list:
+    # Attributes pulled from Algolia - everything normalize_item needs, so no
+    # per-item GraphQL detail fetch is required.
+    BROWSE_ATTRIBUTES = [
+        "listingUuid", "marketplace", "marketplaceSource", "title", "subtitle",
+        "currentPrice", "currentBid", "startingBid", "status", "images",
+        "lotNumber", "bidCount", "auctionEndDatetime", "auctionName",
+        "gradingService", "grade", "serial", "category",
+    ]
+
+    async def browse_all_hits(self, client: httpx.AsyncClient, api_key: str, max_items: int) -> list:
+        """Fetch ALL live hits using Algolia's cursor-based browse endpoint.
+
+        Standard search pagination is capped (`paginationLimitedTo`, ~3000 hits)
+        regardless of the true match count, so it cannot retrieve the full
+        ~155k live weekly auction catalog. The browse endpoint walks the entire
+        result set via an opaque cursor with no such cap.
+        """
+        import json as _json
+        import urllib.parse
+
+        browse_url = (
+            f"https://{self.algolia_app_id.lower()}-dsn.algolia.net"
+            f"/1/indexes/prod_item_state_v1/browse"
+        )
+        params = {
+            "x-algolia-api-key": api_key,
+            "x-algolia-application-id": self.algolia_app_id,
+        }
+        # filters + attributes only need to be sent on the first request; the
+        # cursor carries the query context on subsequent requests.
+        # Restrict to auction marketplaces (WEEKLY/PREMIER). The browse endpoint
+        # does NOT honor the embedded marketplace filter on the search key, so
+        # without this it also returns the ~160k FIXED-price (buy-it-now) listings
+        # which are not auctions and have no end time.
+        initial_query = urllib.parse.urlencode({
+            "filters": 'status:"Live" AND (marketplace:WEEKLY OR marketplace:PREMIER)',
+            "hitsPerPage": 1000,
+            "attributesToRetrieve": _json.dumps(self.BROWSE_ATTRIBUTES),
+        })
+
+        all_hits = []
+        seen_uuids = set()
+        cursor = None
+        page = 0
+
+        while len(all_hits) < max_items:
+            body = {"cursor": cursor} if cursor else {"params": initial_query}
+
+            data = None
+            for attempt in range(3):
+                try:
+                    response = await client.post(browse_url, params=params, json=body, timeout=60.0)
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                except (httpx.HTTPError, httpx.TimeoutException) as e:
+                    if attempt == 2:
+                        raise
+                    print(f"   ⚠️ Browse request failed: {e}. Retrying...")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+
+            hits = data.get("hits", [])
+            for hit in hits:
+                uuid = hit.get("listingUuid")
+                if uuid and uuid not in seen_uuids:
+                    seen_uuids.add(uuid)
+                    all_hits.append(hit)
+
+            page += 1
+            print(f"   Browse page {page}: +{len(hits)} hits (unique total: {len(all_hits)})")
+
+            cursor = data.get("cursor")
+            if not cursor or not hits:
+                break
+
+        return all_hits[:max_items]
+
+    async def scrape(self, db: AsyncSession, max_items: int = 200000) -> list:
         """Main scraping function - fetches ALL items (cards, memorabilia, autographs, etc.)"""
         print("🔍 Fetching items from Fanatics Collect...")
 
@@ -361,76 +462,19 @@ class FanaticsScraper:
             print("📡 Step 0: Fetching fresh Algolia API key...")
             api_key = await self.fetch_search_key(client)
 
-            # Step 1: Fetch ALL items - no category filtering
-            # We use pagination to get all items rather than filtering by subcategory
-            print("📡 Step 1: Getting ALL items from Algolia (no category filter)...")
-
-            all_hits = []
-            seen_uuids = set()
-            page = 0
-            page_size = 1000
-
-            while len(all_hits) < max_items:
-                algolia_response = await self.fetch_algolia_items(
-                    client, api_key, page=page, hits_per_page=page_size, extra_filter=None
-                )
-
-                result = algolia_response['results'][0]
-                page_hits = result['hits']
-                total_available = result['nbHits']
-
-                if page == 0:
-                    print(f"   Total available: {total_available} items")
-
-                if not page_hits:
-                    break
-
-                # Deduplicate
-                new_hits = 0
-                for hit in page_hits:
-                    uuid = hit.get('listingUuid')
-                    if uuid and uuid not in seen_uuids:
-                        seen_uuids.add(uuid)
-                        all_hits.append(hit)
-                        new_hits += 1
-
-                print(f"   Page {page + 1}: Got {len(page_hits)} items, {new_hits} new (total: {len(all_hits)})")
-
-                if len(all_hits) >= total_available or len(page_hits) < page_size:
-                    break
-
-                page += 1
-
-            hits = all_hits[:max_items]
+            # Step 1: Fetch ALL live items via the cursor-based browse endpoint.
+            # Standard search pagination caps out at ~3000 hits regardless of the
+            # true match count, so it cannot retrieve the full ~155k live catalog.
+            print("📡 Step 1: Browsing ALL live items from Algolia...")
+            hits = await self.browse_all_hits(client, api_key, max_items)
             print(f"✅ Fetched {len(hits)} unique items")
 
-            # Fetch details for each item
-            print("\n📡 Step 2: Fetching detailed item information...")
-            print(f"🚀 Fetching details for {len(hits)} items concurrently...")
-
-            # Create tasks for concurrent fetching
-            semaphore = asyncio.Semaphore(50)  # Limit concurrent requests
-
-            async def fetch_with_details(algolia_item):
-                async with semaphore:
-                    marketplace = algolia_item.get('marketplace', 'WEEKLY')
-                    details = await self.fetch_item_details(client, algolia_item['listingUuid'], marketplace)
-                    return (algolia_item, details)
-
-            tasks = [fetch_with_details(item) for item in hits]
-
-            normalized_items = []
-            completed = 0
-
-            for coro in asyncio.as_completed(tasks):
-                algolia_item, details = await coro
-                normalized_item = self.normalize_item(algolia_item, details)
-                normalized_items.append(normalized_item)
-
-                completed += 1
-                if completed % 100 == 0:
-                    print(f"   Progress: {completed}/{len(hits)}")
-
+            # Step 2: Normalize directly from the Algolia hits.
+            # Every field we need (end time, bids, grading, cert#, images) is in the
+            # search response, so no per-item GraphQL detail fetch is required. This
+            # is what makes a full pull of all live weekly auctions feasible.
+            print("\n📡 Step 2: Normalizing items from Algolia data...")
+            normalized_items = [self.normalize_item(item) for item in hits]
             print(f"   ✅ Completed: {len(normalized_items)} items normalized")
 
             # Create or update auction
@@ -460,32 +504,93 @@ class FanaticsScraper:
             # Save items to database
             print(f"\n💾 Saving {len(normalized_items)} items to database...")
 
+            # Record the scrape-start timestamp BEFORE any upsert. Every item we
+            # touch (insert or update) will have updated_at >= this value, so any
+            # still-"Live" Fanatics row left with an older updated_at after the
+            # commit is no longer in the live catalog and should be marked Ended.
+            scrape_start = datetime.utcnow()
+
+            # Dedupe scraped items by external_id (browse already dedupes, but be
+            # safe so the existence dict and the IN() queries stay consistent).
+            items_by_id: Dict[str, dict] = {}
             for item_data in normalized_items:
+                items_by_id[item_data["external_id"]] = item_data
+            unique_items = list(items_by_id.values())
+            scraped_external_ids = list(items_by_id.keys())
+
+            # --- Batch the existence check (kill the N+1 SELECT-per-item) ---
+            # Fetch all existing Fanatics rows for the scraped ids in chunked
+            # IN() queries, building a {external_id: AuctionItem} dict in one pass
+            # instead of one round-trip per item.
+            existing_items: Dict[str, AuctionItem] = {}
+            SELECT_CHUNK = 1000
+            for chunk_start in range(0, len(scraped_external_ids), SELECT_CHUNK):
+                id_chunk = scraped_external_ids[chunk_start:chunk_start + SELECT_CHUNK]
                 result = await db.execute(
                     select(AuctionItem).where(
                         AuctionItem.auction_house == "fanatics",
-                        AuctionItem.external_id == item_data["external_id"]
+                        AuctionItem.external_id.in_(id_chunk)
                     )
                 )
-                existing_item = result.scalar_one_or_none()
+                for row in result.scalars().all():
+                    existing_items[row.external_id] = row
 
-                if existing_item:
-                    # Update existing item
-                    for key, value in item_data.items():
-                        if key not in ['external_id', 'auction_house']:
-                            setattr(existing_item, key, value)
-                    existing_item.updated_at = datetime.utcnow()
-                else:
-                    # Create new item
-                    item = AuctionItem(
-                        auction_id=auction.id,
-                        auction_house="fanatics",
-                        **item_data
-                    )
-                    db.add(item)
+            print(f"   ... {len(unique_items)} items ({len(existing_items)} existing, "
+                  f"{len(unique_items) - len(existing_items)} new)")
 
+            # --- Upsert in chunks, committing periodically ---
+            new_count = 0
+            update_count = 0
+            COMMIT_CHUNK = 1000
+            for batch_start in range(0, len(unique_items), COMMIT_CHUNK):
+                batch = unique_items[batch_start:batch_start + COMMIT_CHUNK]
+
+                for item_data in batch:
+                    existing_item = existing_items.get(item_data["external_id"])
+
+                    if existing_item:
+                        # Update existing item (same fields as before)
+                        for key, value in item_data.items():
+                            if key not in ['external_id', 'auction_house']:
+                                setattr(existing_item, key, value)
+                        # Explicitly bump updated_at so it's guaranteed >= scrape_start
+                        existing_item.updated_at = datetime.utcnow()
+                        update_count += 1
+                    else:
+                        # Create new item. updated_at uses the model default
+                        # (datetime.utcnow), so new rows are also >= scrape_start.
+                        item = AuctionItem(
+                            auction_id=auction.id,
+                            auction_house="fanatics",
+                            **item_data
+                        )
+                        db.add(item)
+                        new_count += 1
+
+                await db.commit()
+
+            print(f"✅ Saved {len(unique_items)} items "
+                  f"({new_count} new, {update_count} updated)")
+
+            # --- Mark stale rows ended ---
+            # Fanatics' browse returns the COMPLETE set of live weekly/premier
+            # auctions, so any existing Fanatics row that is still "Live" but was
+            # NOT touched this run (updated_at < scrape_start, or NULL) is no longer
+            # live. This updated_at-cutoff approach avoids a 40k-element NOT IN()
+            # clause and is safe because every scraped item above had its
+            # updated_at set to >= scrape_start (inserts via the model default,
+            # updates explicitly).
+            stale_result = await db.execute(
+                update(AuctionItem)
+                .where(
+                    AuctionItem.auction_house == "fanatics",
+                    AuctionItem.status != "Ended",
+                    (AuctionItem.updated_at < scrape_start) | (AuctionItem.updated_at.is_(None)),
+                )
+                .values(status="Ended", updated_at=datetime.utcnow())
+            )
             await db.commit()
-            print(f"✅ Saved {len(normalized_items)} items to database")
+            print(f"🏁 Marked {stale_result.rowcount} stale Fanatics items as Ended")
 
             return normalized_items
 

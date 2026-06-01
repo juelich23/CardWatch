@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.database import get_db, init_db
 from app.models import Auction, AuctionItem
 from app.scrapers.base import HealthCheckResult, retry_async
@@ -367,6 +367,25 @@ class PristineScraper:
 
         print(f"\n✅ Scrape complete!", flush=True)
         print(f"   Total: {total_new} new, {total_updated} updated, {total_duplicates} duplicates skipped", flush=True)
+
+        # Mark stale-ended items (time-based, always safe).
+        # Any Pristine row whose end_time is in the past has definitively ended,
+        # regardless of which categories were scraped this run. This avoids the
+        # "not seen this run" approach, which would wrongly end live items if a
+        # category fetch failed.
+        now = datetime.utcnow()
+        ended_result = await db.execute(
+            update(AuctionItem)
+            .where(
+                AuctionItem.auction_house == "pristine",
+                AuctionItem.end_time.isnot(None),
+                AuctionItem.end_time < now,
+                AuctionItem.status != "Ended",
+            )
+            .values(status="Ended", updated_at=now)
+        )
+        await db.commit()
+        print(f"   🏁 Marked {ended_result.rowcount} stale item(s) as Ended", flush=True)
 
         # Print category breakdown
         print("\n📊 Category breakdown:", flush=True)

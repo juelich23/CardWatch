@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from strawberry.fastapi import GraphQLRouter
@@ -8,7 +8,6 @@ from app.config import get_settings
 from app.graphql.schema import schema
 from app.api.auth import router as auth_router
 from app.api.saved_searches import router as saved_searches_router
-from app.api.ai_search import router as ai_search_router
 from app.api.scheduler import router as scheduler_router
 from app.api.bidding import router as bidding_router
 from app.api.credentials import router as credentials_router
@@ -262,10 +261,14 @@ app = FastAPI(
 
 # CORS middleware for Next.js frontend
 # In production, set CORS_ORIGINS env var to your frontend URL
+#
+# Note: browsers reject credentialed requests when allow_origins is the
+# wildcard "*", so allow_credentials must be False whenever the wildcard is
+# in use. Credentials are only enabled when explicit origins are configured.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    allow_credentials=not settings.cors_allow_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -273,7 +276,6 @@ app.add_middleware(
 # REST API routers
 app.include_router(auth_router)
 app.include_router(saved_searches_router)
-app.include_router(ai_search_router)
 app.include_router(scheduler_router)
 app.include_router(bidding_router)
 app.include_router(credentials_router)
@@ -298,5 +300,16 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+async def health_check(response: Response):
+    """Health check that verifies database connectivity.
+
+    Returns 503 if the database is unreachable so Railway won't route
+    traffic to replicas that can't reach Postgres.
+    """
+    try:
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+        return {"status": "healthy", "db": "ok"}
+    except Exception as e:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unhealthy", "db": "error", "error": str(e)}

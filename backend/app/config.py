@@ -9,12 +9,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./auction_data.db"
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-
     # API Keys
     alt_api_key: str = ""
-    anthropic_api_key: str = ""
 
     # Note: Fanatics Algolia API key is now fetched dynamically via GraphQL
 
@@ -36,6 +32,15 @@ class Settings(BaseSettings):
         if self.cors_origins == "*":
             return ["*"]
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    @property
+    def cors_allow_wildcard(self) -> bool:
+        """True when the wildcard origin ("*") is in use.
+
+        Used to decide whether credentialed CORS requests can be allowed,
+        since browsers reject allow_origins=["*"] combined with credentials.
+        """
+        return "*" in self.cors_origins_list
 
     # Performance settings
     scraper_concurrent_requests: int = 10
